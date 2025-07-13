@@ -1,6 +1,7 @@
 package grpc
 
 import (
+	"fmt"
 	"log"
 	"net"
 
@@ -12,16 +13,18 @@ import (
 type grpcService struct {
 	api ports.AppAPI
 	protouser.UnimplementedUserServer
+	port int
 }
 
-func NewGrpcService(api ports.AppAPI) *grpcService {
+func NewGrpcService(api ports.AppAPI, port int) *grpcService {
 	return &grpcService{
-		api: api,
+		api:  api,
+		port: port,
 	}
 }
 
 func (s *grpcService) Run() {
-	listen, err := net.Listen("tcp", ":8080")
+	listen, err := net.Listen("tcp", fmt.Sprintf(":%d", s.port))
 	if err != nil {
 		log.Fatal("failed to listen port") // вообще говоря, надо вызвать
 		// логгер из структуры бизнес-логики
@@ -30,6 +33,6 @@ func (s *grpcService) Run() {
 	protouser.RegisterUserServer(grpcServer, s)
 	err = grpcServer.Serve(listen)
 	if err != nil {
-		log.Fatal("failed to serve grpc on port 8080")
+		log.Fatal("failed to serve grpc on port " + fmt.Sprintf("%d", s.port))
 	}
 }

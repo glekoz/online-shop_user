@@ -13,7 +13,7 @@ import (
 	"github.com/Gleb988/online-shop_user/internal/models"
 )
 
-func (a *grpcService) RegisterUser(ctx context.Context, pu *protouser.CreateUserRequest) (*protouser.CreateUserResponse, error) {
+func (a *grpcService) Create(ctx context.Context, pu *protouser.CreateUserRequest) (*protouser.CreateUserResponse, error) {
 	user := models.UserDTO{
 		Name:     pu.Name,
 		Email:    pu.Email,
@@ -26,7 +26,7 @@ func (a *grpcService) RegisterUser(ctx context.Context, pu *protouser.CreateUser
 	return &protouser.CreateUserResponse{Id: int32(id)}, nil
 }
 
-func (a *grpcService) RetrieveUser(ctx context.Context, pu *protouser.GetUserRequest) (*protouser.GetUserResponse, error) {
+func (a *grpcService) Get(ctx context.Context, pu *protouser.GetUserRequest) (*protouser.GetUserResponse, error) {
 	id := int(pu.Id)
 	user, err := a.api.GetUser(ctx, id)
 	if err != nil {
