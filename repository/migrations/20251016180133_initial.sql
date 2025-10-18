@@ -13,8 +13,7 @@ CREATE INDEX email_idx ON users (email);
 
 CREATE TABLE admins ( -- следят за магазином
     id VARCHAR(50) PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    isCore BOOLEAN NOT NULL, -- можно добавлять и удалять других админов + модеров
-    isPlain BOOLEAN NOT NULL -- можно добавлять и удалять модеров
+    isCore BOOLEAN NOT NULL -- можно добавлять и удалять других админов + модеров
     -- другие возможные права
 );
 

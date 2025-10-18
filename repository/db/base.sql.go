@@ -59,20 +59,20 @@ func (q *Queries) ChangePassword(ctx context.Context, arg ChangePasswordParams) 
 	return err
 }
 
-const create = `-- name: Create :exec
+const createUser = `-- name: CreateUser :exec
 INSERT INTO users(id, name, email, password)
 VALUES ($1, $2, $3, $4)
 `
 
-type CreateParams struct {
+type CreateUserParams struct {
 	ID       string
 	Name     string
 	Email    string
 	Password string
 }
 
-func (q *Queries) Create(ctx context.Context, arg CreateParams) error {
-	_, err := q.db.Exec(ctx, create,
+func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
+	_, err := q.db.Exec(ctx, createUser,
 		arg.ID,
 		arg.Name,
 		arg.Email,
@@ -103,7 +103,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id string) error {
 }
 
 const getAdmin = `-- name: GetAdmin :one
-SELECT id, iscore, isplain 
+SELECT id, iscore 
 FROM admins
 WHERE id = $1
 `
@@ -111,7 +111,7 @@ WHERE id = $1
 func (q *Queries) GetAdmin(ctx context.Context, id string) (Admin, error) {
 	row := q.db.QueryRow(ctx, getAdmin, id)
 	var i Admin
-	err := row.Scan(&i.ID, &i.Iscore, &i.Isplain)
+	err := row.Scan(&i.ID, &i.Iscore)
 	return i, err
 }
 
@@ -164,20 +164,28 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 }
 
 const promoteAdmin = `-- name: PromoteAdmin :exec
-INSERT INTO admins(id, isCore, isPlain)
-VALUES($1, $2, $3)
+INSERT INTO admins(id, isCore)
+VALUES($1, FALSE)
 `
 
-type PromoteAdminParams struct {
-	ID      string
-	Iscore  bool
-	Isplain bool
+// при назначении админом не забыть в транзакции дать права модератора
+func (q *Queries) PromoteAdmin(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, promoteAdmin, id)
+	return err
 }
 
-// при назначении админом не забыть в транзакции дать права модератора
-func (q *Queries) PromoteAdmin(ctx context.Context, arg PromoteAdminParams) error {
-	_, err := q.db.Exec(ctx, promoteAdmin, arg.ID, arg.Iscore, arg.Isplain)
-	return err
+const promoteCoreAdmin = `-- name: PromoteCoreAdmin :execrows
+UPDATE admins
+SET isCore = TRUE
+WHERE id = $1
+`
+
+func (q *Queries) PromoteCoreAdmin(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, promoteCoreAdmin, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const promoteModer = `-- name: PromoteModer :exec

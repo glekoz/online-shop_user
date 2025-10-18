@@ -1,15 +1,20 @@
--- name: Create :exec
+-- name: CreateUser :exec
 INSERT INTO users(id, name, email, password)
 VALUES ($1, $2, $3, $4);
-
--- при назначении админом не забыть в транзакции дать права модератора
--- name: PromoteAdmin :exec
-INSERT INTO admins(id, isCore, isPlain)
-VALUES($1, $2, $3);
 
 -- name: PromoteModer :exec
 INSERT INTO moders(id)
 VALUES($1);
+
+-- при назначении админом не забыть в транзакции дать права модератора
+-- name: PromoteAdmin :exec
+INSERT INTO admins(id, isCore)
+VALUES($1, FALSE);
+
+-- name: PromoteCoreAdmin :execrows
+UPDATE admins
+SET isCore = TRUE
+WHERE id = $1;
 
 -- name: GetUserByID :one
 SELECT * 

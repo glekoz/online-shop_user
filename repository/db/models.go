@@ -5,9 +5,8 @@
 package db
 
 type Admin struct {
-	ID      string
-	Iscore  bool
-	Isplain bool
+	ID     string
+	Iscore bool
 }
 
 type Moder struct {
