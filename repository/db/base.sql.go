@@ -69,6 +69,20 @@ func (q *Queries) ChangePassword(ctx context.Context, arg ChangePasswordParams) 
 	return result.RowsAffected(), nil
 }
 
+const confirmEmail = `-- name: ConfirmEmail :execrows
+UPDATE users
+SET email_confirmed = TRUE
+WHERE id = $1
+`
+
+func (q *Queries) ConfirmEmail(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, confirmEmail, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createUser = `-- name: CreateUser :exec
 INSERT INTO users(id, name, email, password)
 VALUES ($1, $2, $3, $4)
@@ -124,6 +138,7 @@ DELETE FROM users
 WHERE id = $1
 `
 
+// нужно проверять, чтобы было право администратора
 func (q *Queries) DeleteUser(ctx context.Context, id string) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteUser, id)
 	if err != nil {
@@ -133,7 +148,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id string) (int64, error) {
 }
 
 const getAdmin = `-- name: GetAdmin :one
-SELECT id, iscore 
+SELECT id, is_core 
 FROM admins
 WHERE id = $1
 `
@@ -141,7 +156,7 @@ WHERE id = $1
 func (q *Queries) GetAdmin(ctx context.Context, id string) (Admin, error) {
 	row := q.db.QueryRow(ctx, getAdmin, id)
 	var i Admin
-	err := row.Scan(&i.ID, &i.Iscore)
+	err := row.Scan(&i.ID, &i.IsCore)
 	return i, err
 }
 
@@ -158,25 +173,44 @@ func (q *Queries) GetModer(ctx context.Context, id string) (string, error) {
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, name, email, password 
+SELECT users.id, users.name, users.password,
+    CASE WHEN moders.id IS NOT NULL THEN TRUE ELSE FALSE END AS is_moder, 
+    CASE WHEN admins.id IS NOT NULL THEN TRUE ELSE FALSE END AS is_admin,
+    CASE WHEN admins.iscore IS NOT NULL THEN admins.iscore ELSE FALSE END AS is_core
 FROM users
-WHERE email = $1
+    LEFT JOIN moders ON users.id = moders.id
+    LEFT JOIN admins ON users.id = admins.id
+WHERE users.email = $1
 `
 
-func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
+type GetUserByEmailRow struct {
+	ID       string
+	Name     string
+	Password string
+	IsModer  bool
+	IsAdmin  bool
+	IsCore   bool
+}
+
+// используется при логине (инфа добавляется в токен), поэтому
+// нужна дополнительная информация о правах (модер, админ, isCore),
+// чтобы при каждом GET запросе не идти в БД
+func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error) {
 	row := q.db.QueryRow(ctx, getUserByEmail, email)
-	var i User
+	var i GetUserByEmailRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.Email,
 		&i.Password,
+		&i.IsModer,
+		&i.IsAdmin,
+		&i.IsCore,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, name, email, password 
+SELECT id, name, email, password, email_confirmed 
 FROM users
 WHERE id = $1
 `
@@ -189,30 +223,52 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 		&i.Name,
 		&i.Email,
 		&i.Password,
+		&i.EmailConfirmed,
 	)
 	return i, err
 }
 
 const getUsersByEmail = `-- name: GetUsersByEmail :many
-SELECT id, name, email, password 
-FROM users
-WHERE email LIKE $1
+SELECT users.id, users.name, users.email, users.email_confirmed,
+	CASE WHEN moders.id IS NOT NULL THEN TRUE ELSE FALSE END AS is_moder, 
+	CASE WHEN admins.id IS NOT NULL THEN TRUE ELSE FALSE END AS is_admin,
+	CASE WHEN admins.iscore IS NOT NULL THEN admins.iscore ELSE FALSE END AS is_core
+FROM users 
+	LEFT JOIN moders ON users.id = moders.id
+	LEFT JOIN admins ON users.id = admins.id
+WHERE users.email LIKE $1
 `
 
-func (q *Queries) GetUsersByEmail(ctx context.Context, email string) ([]User, error) {
+type GetUsersByEmailRow struct {
+	ID             string
+	Name           string
+	Email          string
+	EmailConfirmed bool
+	IsModer        bool
+	IsAdmin        bool
+	IsCore         bool
+}
+
+// этот метод вызывается только администратором,
+// поэтому нужна полная инфоормация о правах (модератор, админ, isCore),
+// чтобы отобразить её в интерфейсе управления пользователями
+func (q *Queries) GetUsersByEmail(ctx context.Context, email string) ([]GetUsersByEmailRow, error) {
 	rows, err := q.db.Query(ctx, getUsersByEmail, email)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []User
+	var items []GetUsersByEmailRow
 	for rows.Next() {
-		var i User
+		var i GetUsersByEmailRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
 			&i.Email,
-			&i.Password,
+			&i.EmailConfirmed,
+			&i.IsModer,
+			&i.IsAdmin,
+			&i.IsCore,
 		); err != nil {
 			return nil, err
 		}

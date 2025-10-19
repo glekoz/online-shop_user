@@ -65,7 +65,7 @@ func (r *Repository) PromoteModer(ctx context.Context, id string) error {
 	return nil
 }
 
-func (r *Repository) PromoteAdmin(ctx context.Context, id string, isCore bool) error {
+func (r *Repository) PromoteAdmin(ctx context.Context, id string) error {
 	tx, err := r.p.Begin(ctx)
 	if err != nil {
 		return err
@@ -122,28 +122,32 @@ func (r *Repository) GetUserByID(ctx context.Context, id string) (models.User, e
 		return models.User{}, err
 	}
 	return models.User{
-		ID:    u.ID,
-		Name:  u.Name,
-		Email: u.Email,
+		ID:               u.ID,
+		Name:             u.Name,
+		Email:            u.Email,
+		IsEmailConfirmed: u.EmailConfirmed,
 	}, nil
 }
 
-func (r *Repository) GetUserByEmail(ctx context.Context, email string) (models.User, error) {
+func (r *Repository) GetUserByEmail(ctx context.Context, email string) (models.UserToken, error) {
 	u, err := r.q.GetUserByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.User{}, myerrors.ErrNotFound
+			return models.UserToken{}, myerrors.ErrNotFound
 		}
-		return models.User{}, err
+		return models.UserToken{}, err
 	}
-	return models.User{
-		ID:    u.ID,
-		Name:  u.Name,
-		Email: u.Email,
+	return models.UserToken{
+		ID:             u.ID,
+		Name:           u.Name,
+		HashedPassword: u.Password,
+		IsModer:        u.IsModer,
+		IsAdmin:        u.IsAdmin,
+		IsCore:         u.IsCore,
 	}, nil
 }
 
-func (r *Repository) GetUsersByEmail(ctx context.Context, email string) ([]models.User, error) {
+func (r *Repository) GetUsersByEmail(ctx context.Context, email string) ([]models.UserInfo, error) {
 	us, err := r.q.GetUsersByEmail(ctx, email+"%")
 	if err != nil {
 		return nil, err
@@ -151,12 +155,16 @@ func (r *Repository) GetUsersByEmail(ctx context.Context, email string) ([]model
 	if len(us) < 1 {
 		return nil, myerrors.ErrNotFound
 	}
-	users := make([]models.User, 0, len(us))
+	users := make([]models.UserInfo, 0, len(us))
 	for _, u := range us {
-		users = append(users, models.User{
-			ID:    u.ID,
-			Name:  u.Name,
-			Email: u.Email,
+		users = append(users, models.UserInfo{
+			ID:               u.ID,
+			Name:             u.Name,
+			Email:            u.Email,
+			IsEmailConfirmed: u.EmailConfirmed,
+			IsModer:          u.IsModer,
+			IsAdmin:          u.IsAdmin,
+			IsCore:           u.IsCore,
 		})
 	}
 	return users, nil
@@ -183,8 +191,19 @@ func (r *Repository) GetAdmin(ctx context.Context, id string) (models.Admin, err
 	}
 	return models.Admin{
 		ID:     a.ID,
-		IsCore: a.Iscore,
+		IsCore: a.IsCore,
 	}, nil
+}
+
+func (r *Repository) ConfirmEmail(ctx context.Context, id string) error {
+	n, err := r.q.ConfirmEmail(ctx, id)
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return myerrors.ErrNotFound
+	}
+	return nil
 }
 
 func (r *Repository) ChangeName(ctx context.Context, id, newName string) error {

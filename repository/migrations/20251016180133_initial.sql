@@ -4,8 +4,9 @@ CREATE TABLE users (
     id VARCHAR(50) PRIMARY KEY, -- go's uuid converted to string (32 bytes or 36 bytes with dashes)
     name VARCHAR(50) NOT NULL,
     email VARCHAR(100) NOT NULL UNIQUE,
-    password VARCHAR(100) NOT NULL -- надо посмотреть, сколько места занимает хэш бкрипта
-    -- bitrhday
+    password VARCHAR(100) NOT NULL, -- надо посмотреть, сколько места занимает хэш бкрипта
+    email_confirmed BOOLEAN NOT NULL DEFAULT FALSE
+    -- birthday
     -- address
 );
 
@@ -13,7 +14,7 @@ CREATE INDEX email_idx ON users (email);
 
 CREATE TABLE admins ( -- следят за магазином
     id VARCHAR(50) PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    isCore BOOLEAN NOT NULL -- можно добавлять и удалять других админов + модеров
+    is_core BOOLEAN NOT NULL -- можно добавлять и удалять других админов + модеров
     -- другие возможные права
 );
 

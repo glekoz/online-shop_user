@@ -21,15 +21,31 @@ SELECT *
 FROM users
 WHERE id = $1;
 
+-- используется при логине (инфа добавляется в токен), поэтому 
+-- нужна дополнительная информация о правах (модер, админ, isCore),
+-- чтобы при каждом GET запросе не идти в БД
 -- name: GetUserByEmail :one
-SELECT * 
+SELECT users.id, users.name, users.password,
+    CASE WHEN moders.id IS NOT NULL THEN TRUE ELSE FALSE END AS is_moder, 
+    CASE WHEN admins.id IS NOT NULL THEN TRUE ELSE FALSE END AS is_admin,
+    CASE WHEN admins.iscore IS NOT NULL THEN admins.iscore ELSE FALSE END AS is_core
 FROM users
-WHERE email = $1;
+    LEFT JOIN moders ON users.id = moders.id
+    LEFT JOIN admins ON users.id = admins.id
+WHERE users.email = $1;
 
+-- этот метод вызывается только администратором,
+-- поэтому нужна полная инфоормация о правах (модератор, админ, isCore),
+-- чтобы отобразить её в интерфейсе управления пользователями
 -- name: GetUsersByEmail :many
-SELECT * 
-FROM users
-WHERE email LIKE $1;
+SELECT users.id, users.name, users.email, users.email_confirmed,
+	CASE WHEN moders.id IS NOT NULL THEN TRUE ELSE FALSE END AS is_moder, 
+	CASE WHEN admins.id IS NOT NULL THEN TRUE ELSE FALSE END AS is_admin,
+	CASE WHEN admins.iscore IS NOT NULL THEN admins.iscore ELSE FALSE END AS is_core
+FROM users 
+	LEFT JOIN moders ON users.id = moders.id
+	LEFT JOIN admins ON users.id = admins.id
+WHERE users.email LIKE $1;
 
 -- name: GetModer :one
 SELECT * 
@@ -39,6 +55,11 @@ WHERE id = $1;
 -- name: GetAdmin :one
 SELECT * 
 FROM admins
+WHERE id = $1;
+
+-- name: ConfirmEmail :execrows
+UPDATE users
+SET email_confirmed = TRUE
 WHERE id = $1;
 
 -- впоследствии этот метод надо расширить на день рождения и адрес

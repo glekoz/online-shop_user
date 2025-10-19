@@ -6,7 +6,7 @@ package db
 
 type Admin struct {
 	ID     string
-	Iscore bool
+	IsCore bool
 }
 
 type Moder struct {
@@ -14,8 +14,9 @@ type Moder struct {
 }
 
 type User struct {
-	ID       string
-	Name     string
-	Email    string
-	Password string
+	ID             string
+	Name           string
+	Email          string
+	Password       string
+	EmailConfirmed bool
 }
