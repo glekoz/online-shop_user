@@ -65,6 +65,25 @@ func (a *App) RegisterUser(ctx context.Context, name, email, barePassword string
 	return token, nil
 }
 
+func (a *App) ConfirmEmailRequest(ctx context.Context, userID string) error {
+	// проверить, не подтверждена ли уже почта
+	user, err := a.Repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user.IsEmailConfirmed {
+		return myerrors.ErrAlreadyExists
+	}
+	// генерация токена и сохранение его в кэше вместе с userID
+	//
+	// отправка письма с ссылкой на подтверждение почты
+	// ссылка типа /confirm/<uid>/<token>, где токен хранится в кэше в паре userID : token
+	// и при переходе по ссылке посмотреть, валиден ли токен для этого пользователя
+	// и если да, то подтвердить почту
+	//
+	return nil
+}
+
 func (a *App) ConfirmEmail(ctx context.Context, userID string) error {
 	err := a.Repo.ConfirmEmail(ctx, userID)
 	if err != nil {
@@ -190,6 +209,54 @@ func (a *App) GetUsersByEmail(ctx context.Context, email string) ([]models.UserI
 		return nil, err
 	}
 	return users, nil
+}
+
+func (a *App) ChangePasswordRequest(ctx context.Context) error {
+	RUID, ok := ctx.Value(vars.ContextKeyRequestUserID).(string)
+	if !ok || RUID == "" {
+		return myerrors.ErrInvalidCredentials
+	}
+	// генерация токена и сохранение его в кэше вместе с userID
+	//
+	// отправка письма с ссылкой на смену пароля
+	// ссылка типа /reset_password/<uid>/<token>, где токен хранится в кэше в паре userID : token
+	// и при переходе по ссылке посмотреть, валиден ли токен для этого пользователя
+	// и если да, то разрешить смену пароля
+	//
+	return nil
+}
+
+func (a *App) ResetPasswordRequest(ctx context.Context, email string) error {
+	_, err := a.Repo.GetUserByEmail(ctx, email)
+	if err != nil {
+		return err
+	}
+	// генерация токена и сохранение его в кэше вместе с userID
+	//
+	// отправка письма с ссылкой на сброс пароля
+	// ссылка типа /reset_password/<uid>/<token>, где токен хранится в кэше в паре userID : token
+	// и при переходе по ссылке посмотреть, валиден ли токен для этого пользователя
+	// и если да, то разрешить сброс пароля
+	//
+	return nil
+}
+
+// в любом случае приходит ссылка на почту,
+// поэтому нет смысла запрашивать старый пароль
+func (a *App) ChangePassword(ctx context.Context, newBarePassword string) error {
+	RUID, ok := ctx.Value(vars.ContextKeyRequestUserID).(string)
+	if !ok || RUID == "" {
+		return myerrors.ErrInvalidCredentials
+	}
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newBarePassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	err = a.Repo.ChangePassword(ctx, RUID, string(hashedPassword))
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // ----------------------------------------------------------------------
