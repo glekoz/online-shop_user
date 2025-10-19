@@ -5,7 +5,9 @@ import (
 	"errors"
 
 	"github.com/glekoz/online-shop_user/repository/db"
+	"github.com/glekoz/online-shop_user/shared/models"
 	"github.com/glekoz/online-shop_user/shared/myerrors"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -106,6 +108,155 @@ func (r *Repository) PromoteCoreAdmin(ctx context.Context, id string) error {
 		return err
 	}
 	if num != 1 {
+		return myerrors.ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repository) GetUserByID(ctx context.Context, id string) (models.User, error) {
+	u, err := r.q.GetUserByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.User{}, myerrors.ErrNotFound
+		}
+		return models.User{}, err
+	}
+	return models.User{
+		ID:    u.ID,
+		Name:  u.Name,
+		Email: u.Email,
+	}, nil
+}
+
+func (r *Repository) GetUserByEmail(ctx context.Context, email string) (models.User, error) {
+	u, err := r.q.GetUserByEmail(ctx, email)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.User{}, myerrors.ErrNotFound
+		}
+		return models.User{}, err
+	}
+	return models.User{
+		ID:    u.ID,
+		Name:  u.Name,
+		Email: u.Email,
+	}, nil
+}
+
+func (r *Repository) GetUsersByEmail(ctx context.Context, email string) ([]models.User, error) {
+	us, err := r.q.GetUsersByEmail(ctx, email+"%")
+	if err != nil {
+		return nil, err
+	}
+	if len(us) < 1 {
+		return nil, myerrors.ErrNotFound
+	}
+	users := make([]models.User, 0, len(us))
+	for _, u := range us {
+		users = append(users, models.User{
+			ID:    u.ID,
+			Name:  u.Name,
+			Email: u.Email,
+		})
+	}
+	return users, nil
+}
+
+func (r *Repository) GetModer(ctx context.Context, id string) (string, error) {
+	m, err := r.q.GetModer(ctx, id)
+	if err != nil { // if m == ""
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", myerrors.ErrNotFound
+		}
+		return "", err
+	}
+	return m, nil
+}
+
+func (r *Repository) GetAdmin(ctx context.Context, id string) (models.Admin, error) {
+	a, err := r.q.GetAdmin(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.Admin{}, myerrors.ErrNotFound
+		}
+		return models.Admin{}, err
+	}
+	return models.Admin{
+		ID:     a.ID,
+		IsCore: a.Iscore,
+	}, nil
+}
+
+func (r *Repository) ChangeName(ctx context.Context, id, newName string) error {
+	n, err := r.q.ChangeName(ctx, db.ChangeNameParams{
+		ID:   id,
+		Name: newName,
+	})
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return myerrors.ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repository) ChangePassword(ctx context.Context, id, newHashedPassword string) error {
+	n, err := r.q.ChangePassword(ctx, db.ChangePasswordParams{
+		ID:       id,
+		Password: newHashedPassword,
+	})
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return myerrors.ErrNotFound // хотя это не должно произойти
+	}
+	return nil
+}
+
+func (r *Repository) ChangeEmail(ctx context.Context, id, newEmail string) error {
+	n, err := r.q.ChangeEmail(ctx, db.ChangeEmailParams{
+		ID:    id,
+		Email: newEmail,
+	})
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return myerrors.ErrNotFound // хотя это не должно произойти
+	}
+	return nil
+}
+
+func (r *Repository) DeleteUser(ctx context.Context, id string) error {
+	n, err := r.q.DeleteUser(ctx, id)
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return myerrors.ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repository) DeleteModer(ctx context.Context, id string) error {
+	n, err := r.q.DeleteModer(ctx, id)
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return myerrors.ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repository) DeleteAdmin(ctx context.Context, id string) error {
+	n, err := r.q.DeleteAdmin(ctx, id)
+	if err != nil {
+		return err
+	}
+	if n != 1 {
 		return myerrors.ErrNotFound
 	}
 	return nil

@@ -5,3 +5,8 @@ type User struct {
 	Name  string
 	Email string
 }
+
+type Admin struct {
+	ID     string
+	IsCore bool
+}

@@ -9,7 +9,7 @@ import (
 	"context"
 )
 
-const changeEmail = `-- name: ChangeEmail :exec
+const changeEmail = `-- name: ChangeEmail :execrows
 UPDATE users
 SET email = $1
 WHERE id = $2
@@ -21,14 +21,17 @@ type ChangeEmailParams struct {
 }
 
 // асинхронно и не обновлять, пока новая почта не будет подтверждена
-func (q *Queries) ChangeEmail(ctx context.Context, arg ChangeEmailParams) error {
-	_, err := q.db.Exec(ctx, changeEmail, arg.Email, arg.ID)
-	return err
+func (q *Queries) ChangeEmail(ctx context.Context, arg ChangeEmailParams) (int64, error) {
+	result, err := q.db.Exec(ctx, changeEmail, arg.Email, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const changeName = `-- name: ChangeName :exec
+const changeName = `-- name: ChangeName :execrows
 UPDATE users
-SET name=$1
+SET name = $1
 WHERE id = $2
 `
 
@@ -37,12 +40,16 @@ type ChangeNameParams struct {
 	ID   string
 }
 
-func (q *Queries) ChangeName(ctx context.Context, arg ChangeNameParams) error {
-	_, err := q.db.Exec(ctx, changeName, arg.Name, arg.ID)
-	return err
+// впоследствии этот метод надо расширить на день рождения и адрес
+func (q *Queries) ChangeName(ctx context.Context, arg ChangeNameParams) (int64, error) {
+	result, err := q.db.Exec(ctx, changeName, arg.Name, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const changePassword = `-- name: ChangePassword :exec
+const changePassword = `-- name: ChangePassword :execrows
 UPDATE users
 SET password=$1
 WHERE id = $2
@@ -54,9 +61,12 @@ type ChangePasswordParams struct {
 }
 
 // асинхронно с подтверждением через почту (ссылка на изменение пароля так же отправляется на почту, и на странице по этой ссылке можно сменить пароль)
-func (q *Queries) ChangePassword(ctx context.Context, arg ChangePasswordParams) error {
-	_, err := q.db.Exec(ctx, changePassword, arg.Password, arg.ID)
-	return err
+func (q *Queries) ChangePassword(ctx context.Context, arg ChangePasswordParams) (int64, error) {
+	result, err := q.db.Exec(ctx, changePassword, arg.Password, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const createUser = `-- name: CreateUser :exec
@@ -81,25 +91,45 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 	return err
 }
 
-const deleteModer = `-- name: DeleteModer :exec
+const deleteAdmin = `-- name: DeleteAdmin :execrows
+DELETE FROM admins
+WHERE id = $1
+`
+
+// нужно проверять, чтобы было isCore
+func (q *Queries) DeleteAdmin(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAdmin, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteModer = `-- name: DeleteModer :execrows
 DELETE FROM moders
 WHERE id = $1
 `
 
 // нужно проверять, чтобы права на модерацию не убрали у админа
-func (q *Queries) DeleteModer(ctx context.Context, id string) error {
-	_, err := q.db.Exec(ctx, deleteModer, id)
-	return err
+func (q *Queries) DeleteModer(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteModer, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const deleteUser = `-- name: DeleteUser :exec
+const deleteUser = `-- name: DeleteUser :execrows
 DELETE FROM users
 WHERE id = $1
 `
 
-func (q *Queries) DeleteUser(ctx context.Context, id string) error {
-	_, err := q.db.Exec(ctx, deleteUser, id)
-	return err
+func (q *Queries) DeleteUser(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUser, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getAdmin = `-- name: GetAdmin :one
@@ -130,7 +160,7 @@ func (q *Queries) GetModer(ctx context.Context, id string) (string, error) {
 const getUserByEmail = `-- name: GetUserByEmail :one
 SELECT id, name, email, password 
 FROM users
-WHERE email LIKE $1
+WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -161,6 +191,37 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 		&i.Password,
 	)
 	return i, err
+}
+
+const getUsersByEmail = `-- name: GetUsersByEmail :many
+SELECT id, name, email, password 
+FROM users
+WHERE email LIKE $1
+`
+
+func (q *Queries) GetUsersByEmail(ctx context.Context, email string) ([]User, error) {
+	rows, err := q.db.Query(ctx, getUsersByEmail, email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []User
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Email,
+			&i.Password,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const promoteAdmin = `-- name: PromoteAdmin :exec

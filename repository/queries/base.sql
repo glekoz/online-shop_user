@@ -24,40 +24,52 @@ WHERE id = $1;
 -- name: GetUserByEmail :one
 SELECT * 
 FROM users
-WHERE email LIKE $1;
+WHERE email = $1;
 
--- name: GetAdmin :one
+-- name: GetUsersByEmail :many
 SELECT * 
-FROM admins
-WHERE id = $1;
+FROM users
+WHERE email LIKE $1;
 
 -- name: GetModer :one
 SELECT * 
 FROM moders
 WHERE id = $1;
 
--- name: ChangeName :exec
+-- name: GetAdmin :one
+SELECT * 
+FROM admins
+WHERE id = $1;
+
+-- впоследствии этот метод надо расширить на день рождения и адрес
+-- name: ChangeName :execrows
 UPDATE users
-SET name=$1
+SET name = $1
 WHERE id = $2;
 
 -- асинхронно с подтверждением через почту (ссылка на изменение пароля так же отправляется на почту, и на странице по этой ссылке можно сменить пароль)
--- name: ChangePassword :exec 
+-- name: ChangePassword :execrows 
 UPDATE users
 SET password=$1
 WHERE id = $2;
 
 -- асинхронно и не обновлять, пока новая почта не будет подтверждена
--- name: ChangeEmail :exec 
+-- name: ChangeEmail :execrows 
 UPDATE users
 SET email = $1
 WHERE id = $2;
 
--- name: DeleteUser :exec
+-- нужно проверять, чтобы было право администратора
+-- name: DeleteUser :execrows
 DELETE FROM users
 WHERE id = $1;
 
 -- нужно проверять, чтобы права на модерацию не убрали у админа
--- name: DeleteModer :exec
+-- name: DeleteModer :execrows
 DELETE FROM moders
+WHERE id = $1;
+
+-- нужно проверять, чтобы было isCore 
+-- name: DeleteAdmin :execrows
+DELETE FROM admins
 WHERE id = $1;
