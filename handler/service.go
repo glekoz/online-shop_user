@@ -18,8 +18,8 @@ type UserService struct {
 }
 
 type AppAPI interface {
-	Register(ctx context.Context, email, password string) (string, error)
-	Login(ctx context.Context, email, password string) (string, error)
+	Register(ctx context.Context, name, email, barePassword string) (string, error)
+	Login(ctx context.Context, email, barePassword string) (string, error)
 }
 
 func (s *UserService) Register(ctx context.Context, req *user.RegisterUserRequest) (*user.RegisterUserResponse, error) {
@@ -33,7 +33,7 @@ func (s *UserService) Register(ctx context.Context, req *user.RegisterUserReques
 	if !v.Valid() {
 		return regValidationErrorResponse(v)
 	}
-	token, err := s.app.Register(ctx, userreq.Username, userreq.Password)
+	token, err := s.app.Register(ctx, userreq.Username, userreq.Email, userreq.Password)
 	if err != nil {
 		if errors.Is(err, myerrors.ErrAlreadyExists) {
 			return nil, status.Error(codes.AlreadyExists, "user with the same username or email already exists")

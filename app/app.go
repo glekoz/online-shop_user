@@ -2,7 +2,10 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
+	"fmt"
+	"log/slog"
 
 	"github.com/glekoz/online-shop_user/shared/models"
 	"github.com/glekoz/online-shop_user/shared/myerrors"
@@ -30,39 +33,81 @@ type RepoAPI interface {
 	DeleteAdmin(ctx context.Context, id string) error
 }
 
+type MailAPI interface {
+	SendMessage(recipient, link string) (string, error)
+}
+
+type CacheAPI interface {
+	Add(userID, token string) error
+	Get(userID string) (string, bool)
+	Delete(userID string)
+}
+
 type App struct {
-	Repo RepoAPI
-	// emailSender EmailSenderAPI
+	Repo      RepoAPI
+	Mail      MailAPI
+	MailTable CacheAPI
+	logger    *slog.Logger
+
+	frontAddr string
 	secretKey []byte
 }
 
-func New(repo RepoAPI, secretKey []byte) *App {
+func New(repo RepoAPI, mail MailAPI, mt CacheAPI, log *slog.Logger, frontAddr string, secretKey []byte) *App {
 	return &App{
 		Repo:      repo,
+		Mail:      mail,
+		MailTable: mt,
+		logger:    log,
+
+		frontAddr: frontAddr,
 		secretKey: secretKey,
 	}
 }
 
 // для токена возвращается айди и имя, а остальное - false
 // не возвращается, а используется
-func (a *App) RegisterUser(ctx context.Context, name, email, barePassword string) (string, error) {
+func (a *App) Register(ctx context.Context, name, email, barePassword string) (string, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
+		a.logger.Error("uuid creating failed", slog.String("email", email))
 		return "", err
 	}
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(barePassword), bcrypt.DefaultCost)
 	if err != nil {
+		a.logger.Error("password hashing failed", slog.String("email", email))
 		return "", err
 	}
+
 	err = a.Repo.CreateUser(ctx, id.String(), name, email, string(hashedPassword))
 	if err != nil {
 		return "", err
 	}
+
 	token, err := a.CreateJWTToken(id.String(), name, false, false, false)
 	if err != nil {
+		a.logger.Error("jwt token creating failed", slog.String("email", email))
 		return "", err
 	}
+
+	a.sendConfirmationEmail(id.String(), email)
+
+	a.logger.Info("user registered, mail sent with id")
 	return token, nil
+}
+
+func (a *App) sendConfirmationEmail(userID, email string) {
+	mailtoken := rand.Text()
+	err := a.MailTable.Add(userID, mailtoken)
+	if err != nil {
+		a.logger.Error("adding to MailTable failed", slog.String("user ID", userID))
+	}
+	// возможно, стоит откатить запись в БД в случае ошибки - зачем? не надо
+	_, err = a.Mail.SendMessage(email, fmt.Sprintf("%s/confirm/%s/%s", a.frontAddr, userID, mailtoken))
+	if err != nil {
+		a.logger.Error("mailing failed", slog.String("email", email), slog.String("error", err.Error()))
+	}
 }
 
 func (a *App) ConfirmEmailRequest(ctx context.Context, userID string) error {
@@ -74,6 +119,13 @@ func (a *App) ConfirmEmailRequest(ctx context.Context, userID string) error {
 	if user.IsEmailConfirmed {
 		return myerrors.ErrAlreadyExists
 	}
+
+	_, ok := a.MailTable.Get(userID)
+	if ok {
+		a.MailTable.Delete(userID)
+	}
+	a.sendConfirmationEmail(userID, user.Email)
+
 	// генерация токена и сохранение его в кэше вместе с userID
 	//
 	// отправка письма с ссылкой на подтверждение почты
@@ -84,15 +136,23 @@ func (a *App) ConfirmEmailRequest(ctx context.Context, userID string) error {
 	return nil
 }
 
-func (a *App) ConfirmEmail(ctx context.Context, userID string) error {
+// ссылка на этот метод будет в самом письме - тут тоже надо проверять таблицу
+func (a *App) ConfirmEmail(ctx context.Context, userID, mailtoken string) error {
+	mtoken, ok := a.MailTable.Get(userID)
+	if !ok || mtoken != mailtoken {
+		return myerrors.ErrNotFound
+	}
+
 	err := a.Repo.ConfirmEmail(ctx, userID)
 	if err != nil {
 		return err
 	}
+
+	a.MailTable.Delete(userID)
 	return nil
 }
 
-func (a *App) LoginUser(ctx context.Context, email, barePassword string) (string, error) {
+func (a *App) Login(ctx context.Context, email, barePassword string) (string, error) {
 	user, err := a.Repo.GetUserByEmail(ctx, email)
 	if err != nil {
 		return "", err
@@ -103,6 +163,7 @@ func (a *App) LoginUser(ctx context.Context, email, barePassword string) (string
 	}
 	token, err := a.CreateJWTToken(user.ID, user.Name, user.IsModer, user.IsAdmin, user.IsCore)
 	if err != nil {
+		a.logger.Error("jwt token creating failed", slog.String("email", email))
 		return "", err
 	}
 	return token, nil
