@@ -22,7 +22,7 @@ func validationErrorResponse(reason, domain string, metadata map[string]string) 
 	return st.Err()
 }
 
-func regValidationErrorResponse(v *validator.Validator) (*user.RegisterUserResponse, error) {
+func logRegValidationErrorResponse(v *validator.Validator) (*user.LogRegResponse, error) {
 	err := validationErrorResponse("Validation", "user", v.Errors)
 	return nil, err
 }

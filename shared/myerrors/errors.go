@@ -8,5 +8,7 @@ var (
 	ErrAlreadyExists      = errors.New("already exists")
 	ErrInvalidCredentials = errors.New("invalid credentials") // неверный логин или пароль
 	ErrForbidden          = errors.New("forbidden")           // нет прав
-	ErrInvalidToken       = errors.New("invalid token")
+
+	ErrMailSent    = errors.New("mail already sent")
+	ErrNoMailToken = errors.New("provided token does not exists")
 )

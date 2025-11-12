@@ -9,7 +9,6 @@ import (
 
 	"github.com/glekoz/online-shop_user/shared/models"
 	"github.com/glekoz/online-shop_user/shared/myerrors"
-	"github.com/glekoz/online-shop_user/shared/vars"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -67,50 +66,69 @@ func New(repo RepoAPI, mail MailAPI, mt CacheAPI, log *slog.Logger, frontAddr st
 
 // для токена возвращается айди и имя, а остальное - false
 // не возвращается, а используется
-func (a *App) Register(ctx context.Context, name, email, barePassword string) (string, error) {
+func (a *App) Register(ctx context.Context, name, email, barePassword string) (access string, refresh string, err error) {
 	id, err := uuid.NewV7()
 	if err != nil {
 		a.logger.Error("uuid creating failed", slog.String("email", email))
-		return "", err
+		return "", "", err
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(barePassword), bcrypt.DefaultCost)
 	if err != nil {
 		a.logger.Error("password hashing failed", slog.String("email", email))
-		return "", err
+		return "", "", err
+	}
+
+	access, err = a.CreateJWTToken(id.String(), name, false, false, false)
+	if err != nil {
+		a.logger.Error("access jwt token creating failed", slog.String("email", email))
+		return "", "", err
+	}
+
+	refresh, err = a.CreateRefreshToken(id.String(), name, false, false, false)
+	if err != nil {
+		a.logger.Error("refresh jwt token creating failed", slog.String("email", email))
+		return "", "", err
 	}
 
 	err = a.Repo.CreateUser(ctx, id.String(), name, email, string(hashedPassword))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	token, err := a.CreateJWTToken(id.String(), name, false, false, false)
-	if err != nil {
-		a.logger.Error("jwt token creating failed", slog.String("email", email))
-		return "", err
-	}
+	a.sendEmailConfirmation(id.String(), email)
 
-	a.sendConfirmationEmail(id.String(), email)
-
-	a.logger.Info("user registered, mail sent with id")
-	return token, nil
+	a.logger.Info("user registered, mail sent")
+	return access, refresh, nil
 }
 
-func (a *App) sendConfirmationEmail(userID, email string) {
+// мб стоит в горутине это отправлять
+// если в горутине, то ошибку можно и игнорировать
+func (a *App) sendEmailConfirmation(userID, email string) error {
 	mailtoken := rand.Text()
 	err := a.MailTable.Add(userID, mailtoken)
 	if err != nil {
 		a.logger.Error("adding to MailTable failed", slog.String("user ID", userID))
+		return err
 	}
 	// возможно, стоит откатить запись в БД в случае ошибки - зачем? не надо
 	_, err = a.Mail.SendMessage(email, fmt.Sprintf("%s/confirm/%s/%s", a.frontAddr, userID, mailtoken))
 	if err != nil {
 		a.logger.Error("mailing failed", slog.String("email", email), slog.String("error", err.Error()))
+		return err
 	}
+	return nil
 }
 
-func (a *App) ConfirmEmailRequest(ctx context.Context, userID string) error {
+// этот запрос поступает из личного кабинета, поэтому необходимо сверить айди отправителя и айди запрашиваемого аккаунта
+func (a *App) RequestEmailConfirmation(ctx context.Context, userID string) error {
+	RUID, err := getRUID(ctx)
+	if err != nil {
+		return err
+	}
+	if RUID != userID {
+		return myerrors.ErrForbidden
+	}
 	// проверить, не подтверждена ли уже почта
 	user, err := a.Repo.GetUserByID(ctx, userID)
 	if err != nil {
@@ -122,9 +140,13 @@ func (a *App) ConfirmEmailRequest(ctx context.Context, userID string) error {
 
 	_, ok := a.MailTable.Get(userID)
 	if ok {
-		a.MailTable.Delete(userID)
+		// чтобы не было возможности израскодовать запас писем
+		return myerrors.ErrMailSent
 	}
-	a.sendConfirmationEmail(userID, user.Email)
+	err = a.sendEmailConfirmation(userID, user.Email)
+	if err != nil {
+		return err
+	}
 
 	// генерация токена и сохранение его в кэше вместе с userID
 	//
@@ -140,7 +162,7 @@ func (a *App) ConfirmEmailRequest(ctx context.Context, userID string) error {
 func (a *App) ConfirmEmail(ctx context.Context, userID, mailtoken string) error {
 	mtoken, ok := a.MailTable.Get(userID)
 	if !ok || mtoken != mailtoken {
-		return myerrors.ErrNotFound
+		return myerrors.ErrNoMailToken
 	}
 
 	err := a.Repo.ConfirmEmail(ctx, userID)
@@ -152,21 +174,39 @@ func (a *App) ConfirmEmail(ctx context.Context, userID, mailtoken string) error 
 	return nil
 }
 
-func (a *App) Login(ctx context.Context, email, barePassword string) (string, error) {
+func (a *App) Login(ctx context.Context, email, barePassword string) (access string, refresh string, err error) {
 	user, err := a.Repo.GetUserByEmail(ctx, email)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	err = bcrypt.CompareHashAndPassword([]byte(user.HashedPassword), []byte(barePassword))
 	if err != nil {
-		return "", myerrors.ErrInvalidCredentials
+		return "", "", myerrors.ErrInvalidCredentials
 	}
-	token, err := a.CreateJWTToken(user.ID, user.Name, user.IsModer, user.IsAdmin, user.IsCore)
+	access, err = a.CreateJWTToken(user.ID, user.Name, user.IsModer, user.IsAdmin, user.IsCore)
 	if err != nil {
-		a.logger.Error("jwt token creating failed", slog.String("email", email))
+		a.logger.Error("access jwt token creating failed", slog.String("email", email))
+		return "", "", err
+	}
+	refresh, err = a.CreateRefreshToken(user.ID, user.Name, user.IsModer, user.IsAdmin, user.IsCore)
+	if err != nil {
+		a.logger.Error("refresh jwt token creating failed", slog.String("email", email))
+		return "", "", err
+	}
+	return access, refresh, nil
+}
+
+func (a *App) IssueAccessFromRefresh(ctx context.Context, refresh string) (string, error) {
+	user, err := a.ParseJWTToken(refresh)
+	if err != nil {
 		return "", err
 	}
-	return token, nil
+	access, err := a.CreateJWTToken(user.ID, user.Name, user.IsModer, user.IsAdmin, user.IsCore)
+	if err != nil {
+		a.logger.Error("access jwt token creating failed")
+		return "", err
+	}
+	return access, nil
 }
 
 // в будущем можно добавить отправку письма
@@ -176,11 +216,11 @@ func (a *App) Login(ctx context.Context, email, barePassword string) (string, er
 // токен валидируется в http middleware
 // до сервиса додходит только userID из токена
 func (a *App) PromoteModer(ctx context.Context, userID string) error {
-	RUID, ok := ctx.Value(vars.ContextKeyRequestUserID).(string)
-	if !ok || RUID == "" {
-		return myerrors.ErrInvalidCredentials
+	RUID, err := getRUID(ctx)
+	if err != nil {
+		return err
 	}
-	_, err := a.Repo.GetAdmin(ctx, RUID)
+	_, err = a.Repo.GetAdmin(ctx, RUID)
 	if err != nil {
 		if errors.Is(err, myerrors.ErrNotFound) {
 			return myerrors.ErrForbidden
@@ -195,9 +235,9 @@ func (a *App) PromoteModer(ctx context.Context, userID string) error {
 }
 
 func (a *App) PromoteAdmin(ctx context.Context, userID string, isCore bool) error {
-	RUID, ok := ctx.Value(vars.ContextKeyRequestUserID).(string)
-	if !ok || RUID == "" {
-		return myerrors.ErrInvalidCredentials
+	RUID, err := getRUID(ctx)
+	if err != nil {
+		return err
 	}
 	admin, err := a.Repo.GetAdmin(ctx, RUID)
 	if err != nil {
@@ -218,9 +258,9 @@ func (a *App) PromoteAdmin(ctx context.Context, userID string, isCore bool) erro
 
 // специально разнесен с PromoteAdmin
 func (a *App) PromoteCoreAdmin(ctx context.Context, userID string) error {
-	RUID, ok := ctx.Value(vars.ContextKeyRequestUserID).(string)
-	if !ok || RUID == "" {
-		return myerrors.ErrInvalidCredentials
+	RUID, err := getRUID(ctx)
+	if err != nil {
+		return err
 	}
 	admin, err := a.Repo.GetAdmin(ctx, RUID)
 	if err != nil {
@@ -241,10 +281,10 @@ func (a *App) PromoteCoreAdmin(ctx context.Context, userID string) error {
 
 // открыть страницу пользователя может только авторизованный пользователь
 func (a *App) GetUserByID(ctx context.Context, userID string) (models.User, error) {
-	RUID, ok := ctx.Value(vars.ContextKeyRequestUserID).(string)
-	if !ok || RUID == "" {
-		return models.User{}, myerrors.ErrInvalidCredentials
-	}
+	// RUID, ok := ctx.Value(vars.ContextKeyRequestUserID).(string)
+	// if !ok || RUID == "" {
+	// 	return models.User{}, myerrors.ErrInvalidCredentials
+	// }
 	user, err := a.Repo.GetUserByID(ctx, userID)
 	if err != nil {
 		return models.User{}, err
@@ -254,11 +294,11 @@ func (a *App) GetUserByID(ctx context.Context, userID string) (models.User, erro
 
 // когда не админ, редирект на свою страницу
 func (a *App) GetUsersByEmail(ctx context.Context, email string) ([]models.UserInfo, error) {
-	RUID, ok := ctx.Value(vars.ContextKeyRequestUserID).(string)
-	if !ok || RUID == "" {
-		return nil, myerrors.ErrInvalidCredentials
+	RUID, err := getRUID(ctx)
+	if err != nil {
+		return nil, err
 	}
-	_, err := a.Repo.GetAdmin(ctx, RUID)
+	_, err = a.Repo.GetAdmin(ctx, RUID)
 	if err != nil {
 		if errors.Is(err, myerrors.ErrNotFound) {
 			return nil, myerrors.ErrForbidden
@@ -273,10 +313,10 @@ func (a *App) GetUsersByEmail(ctx context.Context, email string) ([]models.UserI
 }
 
 func (a *App) ChangePasswordRequest(ctx context.Context) error {
-	RUID, ok := ctx.Value(vars.ContextKeyRequestUserID).(string)
-	if !ok || RUID == "" {
-		return myerrors.ErrInvalidCredentials
-	}
+	// RUID, ok := ctx.Value(vars.ContextKeyRequestUserID).(string)
+	// if !ok || RUID == "" {
+	// 	return myerrors.ErrInvalidCredentials
+	// }
 	// генерация токена и сохранение его в кэше вместе с userID
 	//
 	// отправка письма с ссылкой на смену пароля
@@ -305,9 +345,9 @@ func (a *App) ResetPasswordRequest(ctx context.Context, email string) error {
 // в любом случае приходит ссылка на почту,
 // поэтому нет смысла запрашивать старый пароль
 func (a *App) ChangePassword(ctx context.Context, newBarePassword string) error {
-	RUID, ok := ctx.Value(vars.ContextKeyRequestUserID).(string)
-	if !ok || RUID == "" {
-		return myerrors.ErrInvalidCredentials
+	RUID, err := getRUID(ctx)
+	if err != nil {
+		return err
 	}
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newBarePassword), bcrypt.DefaultCost)
 	if err != nil {

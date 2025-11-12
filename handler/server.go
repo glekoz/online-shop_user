@@ -18,7 +18,12 @@ func (us *UserService) RunServer(port int) error {
 	if err != nil {
 		return err
 	}
-	serv := grpc.NewServer()
+	serv := grpc.NewServer(
+		(grpc.ChainUnaryInterceptor(
+			us.RequireAuthInterceptor,
+			us.RequireNoAuthInterceptor,
+		)),
+	)
 	user.RegisterUserServer(serv, us)
 	return serv.Serve(listen)
 }

@@ -4,7 +4,7 @@ go 1.24.2
 
 require (
 	github.com/glekoz/cache v1.0.0
-	github.com/glekoz/online-shop_proto v0.1.18
+	github.com/glekoz/online-shop_proto v0.1.19
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.6
