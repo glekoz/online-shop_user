@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/glekoz/online-shop_proto/user"
 	"github.com/glekoz/online-shop_user/shared/vars"
@@ -36,6 +37,8 @@ func (us *UserService) RequireAuthInterceptor(ctx context.Context, req any, info
 	switch info.FullMethod {
 	case user.User_Register_FullMethodName:
 	case user.User_Login_FullMethodName:
+	case user.User_GetNewAccessToken_FullMethodName: // для этого метода неважно наличие или отсутствие токена
+	case user.User_GetRSAPublicKey_FullMethodName: // для этого тоже
 	default:
 		md, ok := metadata.FromIncomingContext(ctx)
 		if !ok || len(md.Get(AuthKey)) < 1 {
@@ -48,6 +51,7 @@ func (us *UserService) RequireAuthInterceptor(ctx context.Context, req any, info
 		u, err := us.app.ParseJWTToken(token)
 		if err != nil || u.ID == "" {
 			// мб, залогировать
+			fmt.Println(err)
 			return nil, status.Error(codes.Unauthenticated, "client provides invalid token")
 		}
 		ctx = context.WithValue(ctx, vars.ContextKeyRequestUserID, u.ID)

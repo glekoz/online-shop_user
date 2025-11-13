@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
 	"log"
 	"log/slog"
 	"os"
@@ -14,6 +16,10 @@ import (
 )
 
 func main() {
+	privateKey, err := genKey()
+	if err != nil {
+		panic(err)
+	}
 	repo, err := repository.New("postgres://postgres:postgres@localhost:5432/training?sslmode=disable")
 	if err != nil {
 		panic(err)
@@ -32,8 +38,17 @@ func main() {
 	if err != nil {
 		log.Fatal("cache issue")
 	}
-	app := app.New(repo, mail, c, logger, "frontAddr", []byte("my_secret_key_12345"))
+	app := app.New(repo, mail, c, logger, "frontAddr", privateKey, &privateKey.PublicKey)
 	server := handler.NewServer(app)
 	logger.Info("starting grpc server...")
 	server.RunServer(8080)
+}
+
+// заменить на чтение из конфигурации
+func genKey() (*rsa.PrivateKey, error) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, err
+	}
+	return privateKey, nil
 }

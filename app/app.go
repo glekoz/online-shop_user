@@ -3,6 +3,9 @@ package app
 import (
 	"context"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,7 +22,7 @@ type RepoAPI interface {
 	PromoteAdmin(ctx context.Context, id string) error
 	PromoteCoreAdmin(ctx context.Context, id string) error
 	GetUserByID(ctx context.Context, id string) (models.User, error)
-	GetUserByEmail(ctx context.Context, email string) (models.UserToken, error)
+	GetUserByEmail(ctx context.Context, email string) (models.UserTokenWithPassword, error)
 	GetUsersByEmail(ctx context.Context, email string) ([]models.UserInfo, error)
 	GetModer(ctx context.Context, id string) (string, error)
 	GetAdmin(ctx context.Context, id string) (models.Admin, error)
@@ -48,19 +51,21 @@ type App struct {
 	MailTable CacheAPI
 	logger    *slog.Logger
 
-	frontAddr string
-	secretKey []byte
+	frontAddr  string
+	privateKey *rsa.PrivateKey
+	publicKey  *rsa.PublicKey
 }
 
-func New(repo RepoAPI, mail MailAPI, mt CacheAPI, log *slog.Logger, frontAddr string, secretKey []byte) *App {
+func New(repo RepoAPI, mail MailAPI, mt CacheAPI, log *slog.Logger, frontAddr string, privateKey *rsa.PrivateKey, publicKey *rsa.PublicKey) *App {
 	return &App{
 		Repo:      repo,
 		Mail:      mail,
 		MailTable: mt,
 		logger:    log,
 
-		frontAddr: frontAddr,
-		secretKey: secretKey,
+		frontAddr:  frontAddr,
+		privateKey: privateKey,
+		publicKey:  publicKey,
 	}
 }
 
@@ -384,4 +389,14 @@ func (a *App) IsModer(ctx context.Context, userID string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func (a *App) GetRSAPublicKey() ([]byte, error) {
+	der, err := x509.MarshalPKIXPublicKey(a.publicKey)
+	if err != nil {
+		return nil, err
+	}
+	res := make([]byte, base64.StdEncoding.Strict().EncodedLen(len(der)))
+	base64.StdEncoding.Encode(res, der)
+	return res, nil
 }

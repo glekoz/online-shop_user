@@ -129,15 +129,15 @@ func (r *Repository) GetUserByID(ctx context.Context, id string) (models.User, e
 	}, nil
 }
 
-func (r *Repository) GetUserByEmail(ctx context.Context, email string) (models.UserToken, error) {
+func (r *Repository) GetUserByEmail(ctx context.Context, email string) (models.UserTokenWithPassword, error) {
 	u, err := r.q.GetUserByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.UserToken{}, myerrors.ErrNotFound
+			return models.UserTokenWithPassword{}, myerrors.ErrNotFound
 		}
-		return models.UserToken{}, err
+		return models.UserTokenWithPassword{}, err
 	}
-	return models.UserToken{
+	return models.UserTokenWithPassword{
 		ID:             u.ID,
 		Name:           u.Name,
 		HashedPassword: u.Password,

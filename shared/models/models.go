@@ -1,13 +1,21 @@
 package models
 
 // то, что используется при входе в аккаунт и хранится в токене
-type UserToken struct {
+type UserTokenWithPassword struct {
 	ID             string
 	Name           string
-	HashedPassword string
+	HashedPassword string `json:"-"`
 	IsModer        bool
 	IsAdmin        bool
 	IsCore         bool
+}
+
+type UserToken struct {
+	ID      string
+	Name    string
+	IsModer bool
+	IsAdmin bool
+	IsCore  bool
 }
 
 // то, что видно пользователю на его странице профиля

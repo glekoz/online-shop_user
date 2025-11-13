@@ -24,6 +24,8 @@ type AppAPI interface {
 	ConfirmEmail(ctx context.Context, userID, mailtoken string) error
 
 	ParseJWTToken(tokenString string) (models.UserToken, error)
+	CreateJWTToken(userID, name string, isModer, isAdmin, isCore bool) (string, error)
+	GetRSAPublicKey() ([]byte, error)
 }
 
 func (s *UserService) Register(ctx context.Context, req *user.RegisterUserRequest) (*user.LogRegResponse, error) {
@@ -118,4 +120,36 @@ func (s *UserService) ConfirmEmail(ctx context.Context, req *user.ConfirmEmailRe
 	return &user.Empty{}, nil
 }
 
-//GetNewAccessToken
+// валидация рефреш токена будет проведена и на фронте, поэтому вызов этого метода
+// можно прогнать через любой интерцептор
+func (s *UserService) GetNewAccessToken(ctx context.Context, req *user.Token) (*user.Token, error) {
+	refresh := req.GetToken()
+	if refresh == "" {
+		return nil, status.Error(codes.InvalidArgument, "refresh token can not be empty")
+	}
+	u, err := s.app.ParseJWTToken(refresh)
+	if err != nil || u.ID == "" {
+		return nil, status.Error(codes.InvalidArgument, "refresh token can not be empty")
+	}
+	access, err := s.app.CreateJWTToken(u.ID, u.Name, u.IsModer, u.IsAdmin, u.IsCore)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "token creating failed")
+	}
+	return &user.Token{Token: access}, nil
+}
+
+// опционально защитить проверкой, чтобы только мои сервисы могли запрашивать
+// но можно всё общение защитить mTLS
+func (s *UserService) GetRSAPublicKey(ctx context.Context, req *user.Empty) (*user.RSAPublicKey, error) {
+	pub, err := s.app.GetRSAPublicKey()
+	if err != nil {
+		return nil, status.Error(codes.Internal, "PKIX generating failed")
+	}
+	return &user.RSAPublicKey{
+		Kty: "RSA",
+		Use: "sig",
+		Kid: "1",
+		Alg: "RS384",
+		Key: pub,
+	}, nil
+}
