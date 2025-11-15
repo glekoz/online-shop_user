@@ -12,11 +12,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type UserService struct {
-	app AppAPI
-	user.UnimplementedUserServer
-}
-
 type AppAPI interface {
 	Register(ctx context.Context, name, email, barePassword string) (access string, refresh string, err error)
 	Login(ctx context.Context, email, barePassword string) (access string, refresh string, err error)

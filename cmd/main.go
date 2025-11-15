@@ -39,7 +39,7 @@ func main() {
 		log.Fatal("cache issue")
 	}
 	app := app.New(repo, mail, c, logger, "frontAddr", privateKey, &privateKey.PublicKey)
-	server := handler.NewServer(app)
+	server := handler.NewServer(app, logger)
 	logger.Info("starting grpc server...")
 	server.RunServer(8080)
 }

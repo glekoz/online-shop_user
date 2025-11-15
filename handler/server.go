@@ -2,6 +2,7 @@ package handler
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 
 	"google.golang.org/grpc"
@@ -9,8 +10,16 @@ import (
 	"github.com/glekoz/online-shop_proto/user"
 )
 
-func NewServer(app AppAPI) *UserService {
-	return &UserService{app: app}
+type UserService struct {
+	user.UnimplementedUserServer
+	app AppAPI
+
+	logger *slog.Logger
+	rl     *RateLimiter
+}
+
+func NewServer(app AppAPI, l *slog.Logger) *UserService {
+	return &UserService{app: app, logger: l, rl: NewRateLimiter()}
 }
 
 func (us *UserService) RunServer(port int) error {
@@ -20,8 +29,11 @@ func (us *UserService) RunServer(port int) error {
 	}
 	serv := grpc.NewServer(
 		(grpc.ChainUnaryInterceptor(
+			us.RateLimiter,
+			us.TimeCounter,
 			us.RequireAuthInterceptor,
 			us.RequireNoAuthInterceptor,
+			us.PanicRecoverer,
 		)),
 	)
 	user.RegisterUserServer(serv, us)
