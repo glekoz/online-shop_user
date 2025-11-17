@@ -106,9 +106,9 @@ func (us *UserService) TimeCounter(ctx context.Context, req any, info *grpc.Unar
 
 	resp, err := handler(ctx, req)
 	if err != nil {
-		us.logger.InfoContext(ctx, "request completed successfully", slog.String("time spent", time.Since(start).String()))
-	} else {
 		us.logger.InfoContext(ctx, "request completed with error", slog.String("time spent", time.Since(start).String()))
+	} else {
+		us.logger.InfoContext(ctx, "request completed successfully", slog.String("time spent", time.Since(start).String()))
 	}
 
 	return resp, err

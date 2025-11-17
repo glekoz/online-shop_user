@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/glekoz/online-shop_proto/user"
+	"github.com/glekoz/online-shop_user/app"
 	"github.com/glekoz/online-shop_user/shared/logger"
 	"github.com/glekoz/online-shop_user/shared/models"
 	"github.com/glekoz/online-shop_user/shared/myerrors"
@@ -46,7 +47,6 @@ func (us *UserService) Register(ctx context.Context, req *user.RegisterUserReque
 			us.logger.InfoContext(ctx, "user with the same email already exists", "input data", map[string]string{"email": userreq.Email})
 			return nil, status.Error(codes.AlreadyExists, "user with the same email already exists")
 		}
-		// а тут всё-таки важно узнать все данные, приведшие к неожиданной ошибке
 		us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "unexpected error", "error", err.Error())
 		return nil, status.Error(codes.Internal, "Internal Error")
 	}
@@ -67,11 +67,11 @@ func (us *UserService) Login(ctx context.Context, req *user.LoginUserRequest) (*
 	}
 	access, refresh, err := us.app.Login(ctx, userreq.Email, userreq.Password)
 	if err != nil {
-		if errors.Is(err, myerrors.ErrNotFound) || errors.Is(err, myerrors.ErrInvalidCredentials) {
+		if errors.Is(err, app.ErrUserNotFound) || errors.Is(err, app.ErrInvalidCredentials) {
 			us.logger.InfoContext(ctx, "wrong email or password", "input data", map[string]string{"email": userreq.Email})
 			return nil, status.Error(codes.Unauthenticated, "wrong email or password")
 		}
-		us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "unexpected error")
+		us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "unexpected error", "error", err.Error())
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &user.LogRegResponse{AccessToken: access, RefreshToken: refresh}, nil
@@ -93,42 +93,51 @@ func (us *UserService) SendEmailConfirmation(ctx context.Context, req *user.User
 	err := us.app.RequestEmailConfirmation(ctx, id)
 	if err != nil {
 		switch {
-		// не помню, откуда это взялось
-		// case errors.Is(err, myerrors.ErrInvalidCredentials):
-		// 	return nil, status.Error(codes.InvalidArgument, "user's ID is not acceptable")
-		case errors.Is(err, myerrors.ErrForbidden):
+		case errors.Is(err, app.ErrNoRUID):
+			us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "user is not authenticated")
+			return nil, status.Error(codes.Unauthenticated, "user is not authenticated")
+		case errors.Is(err, app.ErrRUIDneID):
+			us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "only the user can request email confirmation")
 			return nil, status.Error(codes.PermissionDenied, "only the user can request email confirmation")
-		case errors.Is(err, myerrors.ErrNotFound):
+		case errors.Is(err, app.ErrUserNotFound):
+			us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "no user found")
 			return nil, status.Error(codes.NotFound, "no user found")
-		case errors.Is(err, myerrors.ErrAlreadyExists):
+		case errors.Is(err, app.ErrEmailAlreadyConfirmed):
+			us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "email already confirmed")
 			return nil, status.Error(codes.AlreadyExists, "email already confirmed")
-		case errors.Is(err, myerrors.ErrMailSent):
+		case errors.Is(err, app.ErrMsgAlreadySent):
+			us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "confirmation letter has already been sent")
 			return nil, status.Error(codes.FailedPrecondition, "confirmation letter has already been sent, check your email")
 		default:
-			// или codes.Internal?
-			return nil, status.Error(codes.Unavailable, "mail server is busy")
+			us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "unexpected error", "error", err.Error())
+			return nil, status.Error(codes.Internal, "something went wrong")
 		}
 	}
 	return &user.Empty{}, nil
 }
 
-func (s *UserService) ConfirmEmail(ctx context.Context, req *user.ConfirmEmailRequest) (*user.Empty, error) {
+func (us *UserService) ConfirmEmail(ctx context.Context, req *user.ConfirmEmailRequest) (*user.Empty, error) {
 	userID := req.GetUserID()
 	if userID == "" {
+		us.logger.InfoContext(ctx, "user id can not be empty")
 		return nil, status.Error(codes.InvalidArgument, "user id can not be empty")
 	}
 	mailToken := req.GetMailToken()
 	if mailToken == "" {
+		us.logger.InfoContext(ctx, "mail token can not be empty")
 		return nil, status.Error(codes.InvalidArgument, "mail token can not be empty")
 	}
-	err := s.app.ConfirmEmail(ctx, userID, mailToken)
+	err := us.app.ConfirmEmail(ctx, userID, mailToken)
 	if err != nil {
 		switch {
-		case errors.Is(err, myerrors.ErrNotFound):
+		case errors.Is(err, app.ErrUserNotFound):
+			us.logger.InfoContext(logger.ErrorCtx(ctx, err), "user not found")
 			return nil, status.Error(codes.NotFound, "user not found")
-		case errors.Is(err, myerrors.ErrNoMailToken):
+		case errors.Is(err, app.ErrWrongMailToken):
+			us.logger.InfoContext(logger.ErrorCtx(ctx, err), "provided token has been expired or does not exist")
 			return nil, status.Error(codes.FailedPrecondition, "provided token has been expired or does not exist")
 		default:
+			us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "unexpected error", "error", err.Error())
 			return nil, status.Error(codes.Internal, "something goes wrong")
 		}
 	}
@@ -137,17 +146,20 @@ func (s *UserService) ConfirmEmail(ctx context.Context, req *user.ConfirmEmailRe
 
 // валидация рефреш токена будет проведена и на фронте, поэтому вызов этого метода
 // можно прогнать через любой интерцептор
-func (s *UserService) GetNewAccessToken(ctx context.Context, req *user.Token) (*user.Token, error) {
+func (us *UserService) GetNewAccessToken(ctx context.Context, req *user.Token) (*user.Token, error) {
 	refresh := req.GetToken()
 	if refresh == "" {
+		us.logger.InfoContext(ctx, "refresh token can not be empty")
 		return nil, status.Error(codes.InvalidArgument, "refresh token can not be empty")
 	}
-	u, err := s.app.ParseJWTToken(refresh)
-	if err != nil || u.ID == "" {
-		return nil, status.Error(codes.InvalidArgument, "refresh token can not be empty")
-	}
-	access, err := s.app.CreateJWTToken(u.ID, u.Name, u.IsModer, u.IsAdmin, u.IsCore)
+	u, err := us.app.ParseJWTToken(refresh)
 	if err != nil {
+		us.logger.InfoContext(ctx, "token parsing", "error", err.Error())
+		return nil, status.Error(codes.InvalidArgument, "provided token badly structured")
+	}
+	access, err := us.app.CreateJWTToken(u.ID, u.Name, u.IsModer, u.IsAdmin, u.IsCore)
+	if err != nil {
+		us.logger.ErrorContext(ctx, "token creating", "error", err.Error())
 		return nil, status.Error(codes.Internal, "token creating failed")
 	}
 	return &user.Token{Token: access}, nil
@@ -155,9 +167,10 @@ func (s *UserService) GetNewAccessToken(ctx context.Context, req *user.Token) (*
 
 // опционально защитить проверкой, чтобы только мои сервисы могли запрашивать
 // но можно всё общение защитить mTLS
-func (s *UserService) GetRSAPublicKey(ctx context.Context, req *user.Empty) (*user.RSAPublicKey, error) {
-	pub, err := s.app.GetRSAPublicKey()
+func (us *UserService) GetRSAPublicKey(ctx context.Context, req *user.Empty) (*user.RSAPublicKey, error) {
+	pub, err := us.app.GetRSAPublicKey()
 	if err != nil {
+		us.logger.ErrorContext(ctx, "PKIX generating failed", "error", err.Error())
 		return nil, status.Error(codes.Internal, "PKIX generating failed")
 	}
 	return &user.RSAPublicKey{

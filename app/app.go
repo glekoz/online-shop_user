@@ -173,16 +173,17 @@ func (a *App) RequestEmailConfirmation(ctx context.Context, userID string) error
 func (a *App) ConfirmEmail(ctx context.Context, userID, mailtoken string) error {
 	ok := a.Mail.CheckToken(userID, mailtoken)
 	if !ok {
-		ctx = logger.WithDetails(ctx, "id", userID)
+		ctx = logger.WithDetails(ctx, "mail token", mailtoken)
 		return logger.WrapError(ctx, ErrWrongMailToken)
 	}
 
 	err := a.Repo.ConfirmEmail(ctx, userID)
 	if err != nil {
+		ctx = logger.WithDetails(ctx, "id", userID)
 		if errors.Is(err, repository.ErrNotFound) {
-			return ErrUserNotFound
+			return logger.WrapError(ctx, ErrUserNotFound)
 		}
-		return err
+		return logger.WrapError(ctx, err)
 	}
 	return nil
 }
