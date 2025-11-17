@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/glekoz/online-shop_user/mail"
+	"github.com/glekoz/online-shop_user/repository"
+	"github.com/glekoz/online-shop_user/shared/logger"
 	"github.com/glekoz/online-shop_user/shared/models"
-	"github.com/glekoz/online-shop_user/shared/myerrors"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -36,9 +38,9 @@ type RepoAPI interface {
 }
 
 type MailAPI interface {
-	SendMessage(recipient, link string) (string, error)
+	SendEmailConfirmationMessage(userID, email string, mailtoken, link string) (string, error)
+	CheckToken(userID, token string) bool
 }
-
 type CacheAPI interface {
 	Add(userID, token string) error
 	Get(userID string) (string, bool)
@@ -46,10 +48,10 @@ type CacheAPI interface {
 }
 
 type App struct {
-	Repo      RepoAPI
-	Mail      MailAPI
-	MailTable CacheAPI
-	logger    *slog.Logger
+	Repo RepoAPI
+	Mail MailAPI
+	// MailTable CacheAPI
+	logger *slog.Logger
 
 	frontAddr  string
 	privateKey *rsa.PrivateKey
@@ -58,10 +60,10 @@ type App struct {
 
 func New(repo RepoAPI, mail MailAPI, mt CacheAPI, log *slog.Logger, frontAddr string, privateKey *rsa.PrivateKey, publicKey *rsa.PublicKey) *App {
 	return &App{
-		Repo:      repo,
-		Mail:      mail,
-		MailTable: mt,
-		logger:    log,
+		Repo: repo,
+		Mail: mail,
+		// MailTable: mt,
+		logger: log,
 
 		frontAddr:  frontAddr,
 		privateKey: privateKey,
@@ -74,84 +76,88 @@ func New(repo RepoAPI, mail MailAPI, mt CacheAPI, log *slog.Logger, frontAddr st
 func (a *App) Register(ctx context.Context, name, email, barePassword string) (access string, refresh string, err error) {
 	id, err := uuid.NewV7()
 	if err != nil {
-		a.logger.Error("uuid creating failed", slog.String("email", email))
 		return "", "", err
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(barePassword), bcrypt.DefaultCost)
 	if err != nil {
-		a.logger.Error("password hashing failed", slog.String("email", email))
-		return "", "", err
-	}
-
-	access, err = a.CreateJWTToken(id.String(), name, false, false, false)
-	if err != nil {
-		a.logger.Error("access jwt token creating failed", slog.String("email", email))
-		return "", "", err
-	}
-
-	refresh, err = a.CreateRefreshToken(id.String(), name, false, false, false)
-	if err != nil {
-		a.logger.Error("refresh jwt token creating failed", slog.String("email", email))
 		return "", "", err
 	}
 
 	err = a.Repo.CreateUser(ctx, id.String(), name, email, string(hashedPassword))
 	if err != nil {
+		if errors.Is(err, repository.ErrAlreadyExists) {
+			return "", "", ErrUserAlreadyExists
+		}
 		return "", "", err
 	}
 
-	a.sendEmailConfirmation(id.String(), email)
+	access, err = a.CreateJWTToken(id.String(), name, false, false, false)
+	if err != nil {
+		return "", "", err
+	}
 
-	a.logger.Info("user registered, mail sent")
+	refresh, err = a.CreateRefreshToken(id.String(), name, false, false, false)
+	if err != nil {
+		return "", "", err
+	}
+
+	msgID, err := a.sendEmailConfirmation(id.String(), email)
+	if err != nil {
+		if errors.Is(err, mail.ErrMsgAlreadySent) {
+			a.logger.InfoContext(ctx, "email message has already been sent", "input data", map[string]string{"email": email})
+		} else {
+			a.logger.ErrorContext(ctx, "mail malfunction", "data", map[string]string{"email": email})
+		}
+	}
+	a.logger.InfoContext(ctx, "email sent", "data", map[string]string{"email": email, "msgID": msgID})
+
 	return access, refresh, nil
 }
 
 // мб стоит в горутине это отправлять
 // если в горутине, то ошибку можно и игнорировать
-func (a *App) sendEmailConfirmation(userID, email string) error {
+func (a *App) sendEmailConfirmation(userID, email string) (string, error) {
 	mailtoken := rand.Text()
-	err := a.MailTable.Add(userID, mailtoken)
+	link := fmt.Sprintf("%s/confirm/%s/%s", a.frontAddr, userID, mailtoken)
+	msgID, err := a.Mail.SendEmailConfirmationMessage(userID, email, mailtoken, link)
 	if err != nil {
-		a.logger.Error("adding to MailTable failed", slog.String("user ID", userID))
-		return err
+		return "", err
 	}
-	// возможно, стоит откатить запись в БД в случае ошибки - зачем? не надо
-	_, err = a.Mail.SendMessage(email, fmt.Sprintf("%s/confirm/%s/%s", a.frontAddr, userID, mailtoken))
-	if err != nil {
-		a.logger.Error("mailing failed", slog.String("email", email), slog.String("error", err.Error()))
-		return err
-	}
-	return nil
+	return msgID, nil
 }
 
 // этот запрос поступает из личного кабинета, поэтому необходимо сверить айди отправителя и айди запрашиваемого аккаунта
 func (a *App) RequestEmailConfirmation(ctx context.Context, userID string) error {
 	RUID, err := getRUID(ctx)
 	if err != nil {
-		return err
+		return ErrNoRUID
 	}
 	if RUID != userID {
-		return myerrors.ErrForbidden
+		ctx = logger.WithDetails(ctx, "id", userID)
+		return logger.WrapError(ctx, ErrRUIDneID)
 	}
 	// проверить, не подтверждена ли уже почта
 	user, err := a.Repo.GetUserByID(ctx, userID)
 	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrUserNotFound
+		}
 		return err
 	}
+	ctx = logger.WithDetails(ctx, "email", user.Email)
 	if user.IsEmailConfirmed {
-		return myerrors.ErrAlreadyExists
+		return logger.WrapError(ctx, ErrEmailAlreadyConfirmed)
 	}
 
-	_, ok := a.MailTable.Get(userID)
-	if ok {
-		// чтобы не было возможности израскодовать запас писем
-		return myerrors.ErrMailSent
-	}
-	err = a.sendEmailConfirmation(userID, user.Email)
+	msgID, err := a.sendEmailConfirmation(userID, user.Email)
 	if err != nil {
-		return err
+		if errors.Is(err, mail.ErrMsgAlreadySent) {
+			return logger.WrapError(ctx, ErrMsgAlreadySent)
+		}
+		return logger.WrapError(ctx, err)
 	}
+	a.logger.InfoContext(ctx, "email sent", "msgID", msgID)
 
 	// генерация токена и сохранение его в кэше вместе с userID
 	//
@@ -165,37 +171,41 @@ func (a *App) RequestEmailConfirmation(ctx context.Context, userID string) error
 
 // ссылка на этот метод будет в самом письме - тут тоже надо проверять таблицу
 func (a *App) ConfirmEmail(ctx context.Context, userID, mailtoken string) error {
-	mtoken, ok := a.MailTable.Get(userID)
-	if !ok || mtoken != mailtoken {
-		return myerrors.ErrNoMailToken
+	ok := a.Mail.CheckToken(userID, mailtoken)
+	if !ok {
+		ctx = logger.WithDetails(ctx, "id", userID)
+		return logger.WrapError(ctx, ErrWrongMailToken)
 	}
 
 	err := a.Repo.ConfirmEmail(ctx, userID)
 	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrUserNotFound
+		}
 		return err
 	}
-
-	a.MailTable.Delete(userID)
 	return nil
 }
 
 func (a *App) Login(ctx context.Context, email, barePassword string) (access string, refresh string, err error) {
 	user, err := a.Repo.GetUserByEmail(ctx, email)
 	if err != nil {
-		return "", "", err
+		ctx = logger.WithDetails(ctx, "email", email)
+		if errors.Is(err, repository.ErrNotFound) {
+			return "", "", logger.WrapError(ctx, ErrUserNotFound)
+		}
+		return "", "", logger.WrapError(ctx, err)
 	}
 	err = bcrypt.CompareHashAndPassword([]byte(user.HashedPassword), []byte(barePassword))
 	if err != nil {
-		return "", "", myerrors.ErrInvalidCredentials
+		return "", "", ErrInvalidCredentials
 	}
 	access, err = a.CreateJWTToken(user.ID, user.Name, user.IsModer, user.IsAdmin, user.IsCore)
 	if err != nil {
-		a.logger.Error("access jwt token creating failed", slog.String("email", email))
 		return "", "", err
 	}
 	refresh, err = a.CreateRefreshToken(user.ID, user.Name, user.IsModer, user.IsAdmin, user.IsCore)
 	if err != nil {
-		a.logger.Error("refresh jwt token creating failed", slog.String("email", email))
 		return "", "", err
 	}
 	return access, refresh, nil
@@ -204,11 +214,12 @@ func (a *App) Login(ctx context.Context, email, barePassword string) (access str
 func (a *App) IssueAccessFromRefresh(ctx context.Context, refresh string) (string, error) {
 	user, err := a.ParseJWTToken(refresh)
 	if err != nil {
-		return "", err
+		// ошибку надо или логировать, или передавать выше, но тут для дебага и то, и другое оставлю
+		a.logger.InfoContext(ctx, "parse token", slog.String("error", err.Error()))
+		return "", ErrInvalidCredentials
 	}
 	access, err := a.CreateJWTToken(user.ID, user.Name, user.IsModer, user.IsAdmin, user.IsCore)
 	if err != nil {
-		a.logger.Error("access jwt token creating failed")
 		return "", err
 	}
 	return access, nil
@@ -223,40 +234,56 @@ func (a *App) IssueAccessFromRefresh(ctx context.Context, refresh string) (strin
 func (a *App) PromoteModer(ctx context.Context, userID string) error {
 	RUID, err := getRUID(ctx)
 	if err != nil {
-		return err
+		return ErrNoRUID
 	}
 	_, err = a.Repo.GetAdmin(ctx, RUID)
 	if err != nil {
-		if errors.Is(err, myerrors.ErrNotFound) {
-			return myerrors.ErrForbidden
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrForbidden
 		}
 		return err
 	}
 	err = a.Repo.PromoteModer(ctx, userID)
 	if err != nil {
-		return err
+		ctx = logger.WithDetails(ctx, "id", userID)
+		if errors.Is(err, repository.ErrNotFound) {
+			return logger.WrapError(ctx, ErrUserNotFound)
+		}
+		if errors.Is(err, repository.ErrAlreadyExists) {
+			return logger.WrapError(ctx, ErrUserAlreadyExists)
+		}
+		return logger.WrapError(ctx, err)
 	}
 	return nil
 }
 
-func (a *App) PromoteAdmin(ctx context.Context, userID string, isCore bool) error {
+func (a *App) PromoteAdmin(ctx context.Context, userID string) error {
 	RUID, err := getRUID(ctx)
 	if err != nil {
-		return err
+		return ErrNoRUID
 	}
+	//тут не доделал обработку ошибок с репозитория
 	admin, err := a.Repo.GetAdmin(ctx, RUID)
 	if err != nil {
-		if errors.Is(err, myerrors.ErrNotFound) {
-			return myerrors.ErrForbidden
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrForbidden
 		}
 		return err
 	}
 	if !admin.IsCore {
-		return myerrors.ErrForbidden
+		return ErrForbidden
 	}
+	//тут не доделал обработку ошибок с репозитория
 	err = a.Repo.PromoteAdmin(ctx, userID)
 	if err != nil {
-		return err
+		ctx = logger.WithDetails(ctx, "id", userID)
+		if errors.Is(err, repository.ErrNotFound) {
+			return logger.WrapError(ctx, ErrUserNotFound)
+		}
+		if errors.Is(err, repository.ErrAlreadyExists) {
+			return logger.WrapError(ctx, ErrUserAlreadyExists)
+		}
+		return logger.WrapError(ctx, err)
 	}
 	return nil
 }
@@ -265,21 +292,27 @@ func (a *App) PromoteAdmin(ctx context.Context, userID string, isCore bool) erro
 func (a *App) PromoteCoreAdmin(ctx context.Context, userID string) error {
 	RUID, err := getRUID(ctx)
 	if err != nil {
-		return err
+		return ErrNoRUID
 	}
+	//тут не доделал обработку ошибок с репозитория
 	admin, err := a.Repo.GetAdmin(ctx, RUID)
 	if err != nil {
-		if errors.Is(err, myerrors.ErrNotFound) {
-			return myerrors.ErrForbidden
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrForbidden
 		}
 		return err
 	}
 	if !admin.IsCore {
-		return myerrors.ErrForbidden
+		return ErrForbidden
 	}
+	//тут не доделал обработку ошибок с репозитория
 	err = a.Repo.PromoteCoreAdmin(ctx, userID)
 	if err != nil {
-		return err
+		ctx = logger.WithDetails(ctx, "id", userID)
+		if errors.Is(err, repository.ErrNotFound) {
+			return logger.WrapError(ctx, ErrUserNotFound)
+		}
+		return logger.WrapError(ctx, err)
 	}
 	return nil
 }
@@ -290,9 +323,15 @@ func (a *App) GetUserByID(ctx context.Context, userID string) (models.User, erro
 	// if !ok || RUID == "" {
 	// 	return models.User{}, myerrors.ErrInvalidCredentials
 	// }
+
+	//тут не доделал обработку ошибок с репозитория
 	user, err := a.Repo.GetUserByID(ctx, userID)
 	if err != nil {
-		return models.User{}, err
+		ctx = logger.WithDetails(ctx, "id", userID)
+		if errors.Is(err, repository.ErrNotFound) {
+			return models.User{}, logger.WrapError(ctx, ErrUserNotFound)
+		}
+		return models.User{}, logger.WrapError(ctx, err)
 	}
 	return user, nil
 }
@@ -301,18 +340,22 @@ func (a *App) GetUserByID(ctx context.Context, userID string) (models.User, erro
 func (a *App) GetUsersByEmail(ctx context.Context, email string) ([]models.UserInfo, error) {
 	RUID, err := getRUID(ctx)
 	if err != nil {
-		return nil, err
+		return nil, ErrNoRUID
 	}
 	_, err = a.Repo.GetAdmin(ctx, RUID)
 	if err != nil {
-		if errors.Is(err, myerrors.ErrNotFound) {
-			return nil, myerrors.ErrForbidden
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrForbidden
 		}
 		return nil, err
 	}
 	users, err := a.Repo.GetUsersByEmail(ctx, email)
 	if err != nil {
-		return nil, err
+		ctx = logger.WithDetails(ctx, "email", email)
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, logger.WrapError(ctx, ErrUserNotFound)
+		}
+		return nil, logger.WrapError(ctx, err)
 	}
 	return users, nil
 }
@@ -335,7 +378,11 @@ func (a *App) ChangePasswordRequest(ctx context.Context) error {
 func (a *App) ResetPasswordRequest(ctx context.Context, email string) error {
 	_, err := a.Repo.GetUserByEmail(ctx, email)
 	if err != nil {
-		return err
+		ctx = logger.WithDetails(ctx, "email", email)
+		if errors.Is(err, repository.ErrNotFound) {
+			return logger.WrapError(ctx, ErrUserNotFound)
+		}
+		return logger.WrapError(ctx, err)
 	}
 	// генерация токена и сохранение его в кэше вместе с userID
 	//
@@ -352,7 +399,7 @@ func (a *App) ResetPasswordRequest(ctx context.Context, email string) error {
 func (a *App) ChangePassword(ctx context.Context, newBarePassword string) error {
 	RUID, err := getRUID(ctx)
 	if err != nil {
-		return err
+		return ErrNoRUID
 	}
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newBarePassword), bcrypt.DefaultCost)
 	if err != nil {
@@ -370,10 +417,11 @@ func (a *App) ChangePassword(ctx context.Context, newBarePassword string) error 
 // ----------------------------------------------------------------------
 
 func (a *App) IsAdmin(ctx context.Context, userID string) (bool, error) {
+	//тут не доделал обработку ошибок с репозитория
 	_, err := a.Repo.GetAdmin(ctx, userID)
 	if err != nil {
-		if errors.Is(err, myerrors.ErrNotFound) {
-			return false, myerrors.ErrForbidden
+		if errors.Is(err, repository.ErrNotFound) {
+			return false, ErrForbidden
 		}
 		return false, err
 	}
@@ -381,10 +429,11 @@ func (a *App) IsAdmin(ctx context.Context, userID string) (bool, error) {
 }
 
 func (a *App) IsModer(ctx context.Context, userID string) (bool, error) {
+	//тут не доделал обработку ошибок с репозитория
 	_, err := a.Repo.GetModer(ctx, userID)
 	if err != nil {
-		if errors.Is(err, myerrors.ErrNotFound) {
-			return false, myerrors.ErrForbidden
+		if errors.Is(err, repository.ErrNotFound) {
+			return false, ErrForbidden
 		}
 		return false, err
 	}

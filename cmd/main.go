@@ -24,7 +24,11 @@ func main() {
 		panic(err)
 	}
 	logger := logger.New(os.Stdout, nil)
-	mail := mail.New()
+	c1, err := cache.New(3600)
+	if err != nil {
+		log.Fatal("cache issue")
+	}
+	mail := mail.New(c1)
 	c, err := cache.New(3600)
 	if err != nil {
 		log.Fatal("cache issue")

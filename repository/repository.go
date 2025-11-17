@@ -6,12 +6,12 @@ import (
 
 	"github.com/glekoz/online-shop_user/repository/db"
 	"github.com/glekoz/online-shop_user/shared/models"
-	"github.com/glekoz/online-shop_user/shared/myerrors"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Добавить КЭШ АПИ
 type Repository struct {
 	q *db.Queries
 	p *pgxpool.Pool
@@ -40,7 +40,7 @@ func (r *Repository) CreateUser(ctx context.Context, id, name, email, hashedPass
 		var errp *pgconn.PgError
 		if errors.As(err, &errp) {
 			if errp.Code == UniqueViolationCode {
-				return myerrors.ErrAlreadyExists
+				return ErrAlreadyExists
 			}
 		}
 		return err
@@ -55,9 +55,9 @@ func (r *Repository) PromoteModer(ctx context.Context, id string) error {
 		if errors.As(err, &errp) {
 			switch errp.Code {
 			case ForeignKeyViolationCode:
-				return myerrors.ErrNotFound
+				return ErrNotFound
 			case UniqueViolationCode:
-				return myerrors.ErrAlreadyExists
+				return ErrAlreadyExists
 			}
 		}
 		return err
@@ -79,9 +79,9 @@ func (r *Repository) PromoteAdmin(ctx context.Context, id string) error {
 		if errors.As(err, &errp) {
 			switch errp.Code {
 			case ForeignKeyViolationCode:
-				return myerrors.ErrNotFound
+				return ErrNotFound
 			case UniqueViolationCode:
-				return myerrors.ErrAlreadyExists
+				return ErrAlreadyExists
 			}
 		}
 		return err
@@ -108,7 +108,7 @@ func (r *Repository) PromoteCoreAdmin(ctx context.Context, id string) error {
 		return err
 	}
 	if num != 1 {
-		return myerrors.ErrNotFound
+		return ErrNotFound
 	}
 	return nil
 }
@@ -117,7 +117,7 @@ func (r *Repository) GetUserByID(ctx context.Context, id string) (models.User, e
 	u, err := r.q.GetUserByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.User{}, myerrors.ErrNotFound
+			return models.User{}, ErrNotFound
 		}
 		return models.User{}, err
 	}
@@ -133,7 +133,7 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (models.U
 	u, err := r.q.GetUserByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.UserTokenWithPassword{}, myerrors.ErrNotFound
+			return models.UserTokenWithPassword{}, ErrNotFound
 		}
 		return models.UserTokenWithPassword{}, err
 	}
@@ -153,7 +153,7 @@ func (r *Repository) GetUsersByEmail(ctx context.Context, email string) ([]model
 		return nil, err
 	}
 	if len(us) < 1 {
-		return nil, myerrors.ErrNotFound
+		return nil, ErrNotFound
 	}
 	users := make([]models.UserInfo, 0, len(us))
 	for _, u := range us {
@@ -174,7 +174,7 @@ func (r *Repository) GetModer(ctx context.Context, id string) (string, error) {
 	m, err := r.q.GetModer(ctx, id)
 	if err != nil { // if m == ""
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", myerrors.ErrNotFound
+			return "", ErrNotFound
 		}
 		return "", err
 	}
@@ -185,7 +185,7 @@ func (r *Repository) GetAdmin(ctx context.Context, id string) (models.Admin, err
 	a, err := r.q.GetAdmin(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.Admin{}, myerrors.ErrNotFound
+			return models.Admin{}, ErrNotFound
 		}
 		return models.Admin{}, err
 	}
@@ -201,7 +201,7 @@ func (r *Repository) ConfirmEmail(ctx context.Context, id string) error {
 		return err
 	}
 	if n != 1 {
-		return myerrors.ErrNotFound
+		return ErrNotFound
 	}
 	return nil
 }
@@ -215,7 +215,7 @@ func (r *Repository) ChangeName(ctx context.Context, id, newName string) error {
 		return err
 	}
 	if n != 1 {
-		return myerrors.ErrNotFound
+		return ErrNotFound
 	}
 	return nil
 }
@@ -229,7 +229,7 @@ func (r *Repository) ChangePassword(ctx context.Context, id, newHashedPassword s
 		return err
 	}
 	if n != 1 {
-		return myerrors.ErrNotFound // хотя это не должно произойти
+		return ErrNotFound // хотя это не должно произойти
 	}
 	return nil
 }
@@ -243,7 +243,7 @@ func (r *Repository) ChangeEmail(ctx context.Context, id, newEmail string) error
 		return err
 	}
 	if n != 1 {
-		return myerrors.ErrNotFound // хотя это не должно произойти
+		return ErrNotFound // хотя это не должно произойти
 	}
 	return nil
 }
@@ -254,7 +254,7 @@ func (r *Repository) DeleteUser(ctx context.Context, id string) error {
 		return err
 	}
 	if n != 1 {
-		return myerrors.ErrNotFound
+		return ErrNotFound
 	}
 	return nil
 }
@@ -265,7 +265,7 @@ func (r *Repository) DeleteModer(ctx context.Context, id string) error {
 		return err
 	}
 	if n != 1 {
-		return myerrors.ErrNotFound
+		return ErrNotFound
 	}
 	return nil
 }
@@ -276,7 +276,7 @@ func (r *Repository) DeleteAdmin(ctx context.Context, id string) error {
 		return err
 	}
 	if n != 1 {
-		return myerrors.ErrNotFound
+		return ErrNotFound
 	}
 	return nil
 }

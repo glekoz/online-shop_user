@@ -4,14 +4,15 @@ import (
 	"context"
 
 	"github.com/glekoz/online-shop_user/shared/logger"
-	"github.com/glekoz/online-shop_user/shared/myerrors"
 )
 
 // в интерцепторе уже делается так, чтобы айди не был пустым
+// чтобы айди БЫЛ, иначе будет ошибка для тех методов, которые
+// требуют аутентификацию
 func getRUID(ctx context.Context) (string, error) {
 	ld, ok := ctx.Value(logger.LogDataKey).(logger.LogData)
 	if !ok || ld.UserID == "" {
-		return "", myerrors.ErrInvalidCredentials
+		return "", ErrNoRUID
 	}
 	return ld.UserID, nil
 }

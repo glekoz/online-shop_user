@@ -19,6 +19,7 @@ type LogData struct {
 	UserID    string
 	IPAddress string
 	Method    string
+	Details   map[string]any
 }
 
 func NewMyJSONLogHandler(n slog.Handler) *MyJSONLogHandler {
@@ -39,6 +40,9 @@ func (h *MyJSONLogHandler) Handle(ctx context.Context, rec slog.Record) error {
 		}
 		if ld.Method != "" {
 			rec.Add("method", ld.Method)
+		}
+		if ld.Details != nil {
+			rec.Add("details", ld.Details)
 		}
 	}
 	return h.handler.Handle(ctx, rec)
@@ -74,6 +78,18 @@ func WithMethod(ctx context.Context, method string) context.Context {
 		return context.WithValue(ctx, LogDataKey, ld)
 	}
 	return context.WithValue(ctx, LogDataKey, LogData{Method: method})
+}
+
+// это в основном для ошибок
+func WithDetails(ctx context.Context, key string, detail any) context.Context {
+	if ld, ok := ctx.Value(LogDataKey).(LogData); ok {
+		if ld.Details == nil {
+			ld.Details = make(map[string]any)
+		}
+		ld.Details[key] = detail
+		return context.WithValue(ctx, LogDataKey, ld)
+	}
+	return context.WithValue(ctx, LogDataKey, LogData{Details: map[string]any{key: detail}})
 }
 
 func New(w io.Writer, opts *slog.HandlerOptions) *slog.Logger {

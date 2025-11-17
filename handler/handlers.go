@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/glekoz/online-shop_proto/user"
+	"github.com/glekoz/online-shop_user/shared/logger"
 	"github.com/glekoz/online-shop_user/shared/models"
 	"github.com/glekoz/online-shop_user/shared/myerrors"
 	"github.com/glekoz/online-shop_user/shared/validator"
@@ -23,7 +24,7 @@ type AppAPI interface {
 	GetRSAPublicKey() ([]byte, error)
 }
 
-func (s *UserService) Register(ctx context.Context, req *user.RegisterUserRequest) (*user.LogRegResponse, error) {
+func (us *UserService) Register(ctx context.Context, req *user.RegisterUserRequest) (*user.LogRegResponse, error) {
 	userreq := models.RegisterUserReq{
 		Username: req.GetUsername(),
 		Password: req.GetPassword(),
@@ -32,19 +33,28 @@ func (s *UserService) Register(ctx context.Context, req *user.RegisterUserReques
 	v := validator.New()
 	userreq.Validate(v)
 	if !v.Valid() {
-		return logRegValidationErrorResponse(v)
+		// можно было бы добавить тэги для RegisterUserReq или добавить метод MarshalJSON,
+		// но если логировать понадобится в текстовом формате, то чувствительные данные
+		// попадут в логи
+		us.logger.InfoContext(ctx, "validation failed", "input data", map[string]string{"username": userreq.Username, "email": userreq.Email})
+		return logRegBadRequestResponse(v)
 	}
-	access, refresh, err := s.app.Register(ctx, userreq.Username, userreq.Email, userreq.Password)
+	access, refresh, err := us.app.Register(ctx, userreq.Username, userreq.Email, userreq.Password)
 	if err != nil {
+		// обработать ошибки
 		if errors.Is(err, myerrors.ErrAlreadyExists) {
+			us.logger.InfoContext(ctx, "user with the same email already exists", "input data", map[string]string{"email": userreq.Email})
 			return nil, status.Error(codes.AlreadyExists, "user with the same email already exists")
 		}
-		return nil, status.Error(codes.Internal, err.Error())
+		// а тут всё-таки важно узнать все данные, приведшие к неожиданной ошибке
+		us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "unexpected error", "error", err.Error())
+		return nil, status.Error(codes.Internal, "Internal Error")
 	}
 	return &user.LogRegResponse{AccessToken: access, RefreshToken: refresh}, nil
 }
 
-func (s *UserService) Login(ctx context.Context, req *user.LoginUserRequest) (*user.LogRegResponse, error) {
+func (us *UserService) Login(ctx context.Context, req *user.LoginUserRequest) (*user.LogRegResponse, error) {
+	// а насколько важно валидировать данные для входа?
 	userreq := models.LoginUserReq{
 		Email:    req.GetEmail(),
 		Password: req.GetPassword(),
@@ -52,30 +62,40 @@ func (s *UserService) Login(ctx context.Context, req *user.LoginUserRequest) (*u
 	v := validator.New()
 	userreq.Validate(v)
 	if !v.Valid() {
-		return logRegValidationErrorResponse(v)
+		us.logger.InfoContext(ctx, "validation failed", "input data", map[string]string{"email": userreq.Email})
+		return logRegBadRequestResponse(v)
 	}
-	access, refresh, err := s.app.Login(ctx, userreq.Email, userreq.Password)
+	access, refresh, err := us.app.Login(ctx, userreq.Email, userreq.Password)
 	if err != nil {
 		if errors.Is(err, myerrors.ErrNotFound) || errors.Is(err, myerrors.ErrInvalidCredentials) {
-			return nil, status.Error(codes.Unauthenticated, "invalid email or password")
+			us.logger.InfoContext(ctx, "wrong email or password", "input data", map[string]string{"email": userreq.Email})
+			return nil, status.Error(codes.Unauthenticated, "wrong email or password")
 		}
+		us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "unexpected error")
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &user.LogRegResponse{AccessToken: access, RefreshToken: refresh}, nil
 }
 
 // этот запрос поступает из личного кабинета, поэтому необходимо сверить айди отправителя и айди запрашиваемого аккаунта
-func (s *UserService) SendEmailConfirmation(ctx context.Context, req *user.UserID) (*user.Empty, error) {
+func (us *UserService) SendEmailConfirmation(ctx context.Context, req *user.UserID) (*user.Empty, error) {
 	id := req.GetId()
 	if id == "" {
+		us.logger.InfoContext(ctx, "validation failed")
 		return nil, status.Error(codes.InvalidArgument, "user id can not be empty")
 	}
+	//
+
+	// ТУТ ОСТАНОВИЛСЯ С ЛОГЕРОМ
+
+	//
 	// мб стоит в горутине это отправлять
-	err := s.app.RequestEmailConfirmation(ctx, id)
+	err := us.app.RequestEmailConfirmation(ctx, id)
 	if err != nil {
 		switch {
-		case errors.Is(err, myerrors.ErrInvalidCredentials):
-			return nil, status.Error(codes.InvalidArgument, "user's ID is not acceptable")
+		// не помню, откуда это взялось
+		// case errors.Is(err, myerrors.ErrInvalidCredentials):
+		// 	return nil, status.Error(codes.InvalidArgument, "user's ID is not acceptable")
 		case errors.Is(err, myerrors.ErrForbidden):
 			return nil, status.Error(codes.PermissionDenied, "only the user can request email confirmation")
 		case errors.Is(err, myerrors.ErrNotFound):

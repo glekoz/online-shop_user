@@ -17,8 +17,6 @@ import (
 const AuthKey = "authorization"
 const IPAddress = "ipaddress"
 
-// us.logger.Info("incoming request", slog.String("resource", info.FullMethod))
-// тут можно опционально вставлять RUID в контекст
 func (us *UserService) RequireNoAuthInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	switch info.FullMethod {
 	case user.User_Register_FullMethodName:

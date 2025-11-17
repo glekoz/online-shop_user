@@ -1,10 +1,10 @@
 package app
 
 import (
+	"errors"
 	"time"
 
 	"github.com/glekoz/online-shop_user/shared/models"
-	"github.com/glekoz/online-shop_user/shared/myerrors"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -27,32 +27,28 @@ func (a *App) CreateRefreshToken(userID, name string, isModer, isAdmin, isCore b
 }
 
 // возможно, токен будет парситься в http middleware
+// любая ошибка говорит о том, что что-то не так с токеном
 func (a *App) ParseJWTToken(tokenString string) (models.UserToken, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &jwt.MapClaims{}, func(token *jwt.Token) (any, error) {
 		return a.publicKey, nil
 	})
 	if err != nil {
-		a.logger.Error("jwt.ParseWithClaims")
 		return models.UserToken{}, err
 	}
 	if !token.Valid {
-		a.logger.Error("!token.Valid")
-		return models.UserToken{}, myerrors.ErrInvalidCredentials
+		return models.UserToken{}, errors.New("!token.Valid")
 	}
 	claims, ok := token.Claims.(*jwt.MapClaims)
 	if !ok {
-		a.logger.Error("token.Claims.(*jwt.MapClaims)")
-		return models.UserToken{}, myerrors.ErrInvalidCredentials
+		return models.UserToken{}, errors.New("token.Claims.(*jwt.MapClaims)")
 	}
 	data, ok := (*claims)["data"].(map[string]any)
 	if !ok {
-		a.logger.Error("(*claims)[data].(map[string]any)")
-		return models.UserToken{}, myerrors.ErrInvalidCredentials
+		return models.UserToken{}, errors.New("(*claims)[data].(map[string]any)")
 	}
 	user, err := models.MapToToken(data)
 	if err != nil {
-		a.logger.Error(err.Error())
-		return models.UserToken{}, myerrors.ErrInvalidCredentials
+		return models.UserToken{}, err
 	}
 	return user, nil
 }
