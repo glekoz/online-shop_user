@@ -2,13 +2,10 @@ package handler
 
 import (
 	"context"
-	"errors"
+	"log/slog"
 
 	"github.com/glekoz/online-shop_proto/user"
-	"github.com/glekoz/online-shop_user/app"
-	"github.com/glekoz/online-shop_user/shared/logger"
 	"github.com/glekoz/online-shop_user/shared/models"
-	"github.com/glekoz/online-shop_user/shared/myerrors"
 	"github.com/glekoz/online-shop_user/shared/validator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -42,13 +39,7 @@ func (us *UserService) Register(ctx context.Context, req *user.RegisterUserReque
 	}
 	access, refresh, err := us.app.Register(ctx, userreq.Username, userreq.Email, userreq.Password)
 	if err != nil {
-		// обработать ошибки
-		if errors.Is(err, myerrors.ErrAlreadyExists) {
-			us.logger.InfoContext(ctx, "user with the same email already exists", "input data", map[string]string{"email": userreq.Email})
-			return nil, status.Error(codes.AlreadyExists, "user with the same email already exists")
-		}
-		us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "unexpected error", "error", err.Error())
-		return nil, status.Error(codes.Internal, "Internal Error")
+		return nil, us.handleError(ctx, err, "input data", map[string]string{"email": userreq.Email})
 	}
 	return &user.LogRegResponse{AccessToken: access, RefreshToken: refresh}, nil
 }
@@ -67,12 +58,7 @@ func (us *UserService) Login(ctx context.Context, req *user.LoginUserRequest) (*
 	}
 	access, refresh, err := us.app.Login(ctx, userreq.Email, userreq.Password)
 	if err != nil {
-		if errors.Is(err, app.ErrUserNotFound) || errors.Is(err, app.ErrInvalidCredentials) {
-			us.logger.InfoContext(ctx, "wrong email or password", "input data", map[string]string{"email": userreq.Email})
-			return nil, status.Error(codes.Unauthenticated, "wrong email or password")
-		}
-		us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "unexpected error", "error", err.Error())
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, us.handleError(ctx, err, "input data", map[string]string{"email": userreq.Email})
 	}
 	return &user.LogRegResponse{AccessToken: access, RefreshToken: refresh}, nil
 }
@@ -82,36 +68,13 @@ func (us *UserService) SendEmailConfirmation(ctx context.Context, req *user.User
 	id := req.GetId()
 	if id == "" {
 		us.logger.InfoContext(ctx, "validation failed")
-		return nil, status.Error(codes.InvalidArgument, "user id can not be empty")
+		return nil, badRequestResponse("validation", map[string]string{"id": "must be provided"})
 	}
-	//
 
-	// ТУТ ОСТАНОВИЛСЯ С ЛОГЕРОМ
-
-	//
 	// мб стоит в горутине это отправлять
 	err := us.app.RequestEmailConfirmation(ctx, id)
 	if err != nil {
-		switch {
-		case errors.Is(err, app.ErrNoRUID):
-			us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "user is not authenticated")
-			return nil, status.Error(codes.Unauthenticated, "user is not authenticated")
-		case errors.Is(err, app.ErrRUIDneID):
-			us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "only the user can request email confirmation")
-			return nil, status.Error(codes.PermissionDenied, "only the user can request email confirmation")
-		case errors.Is(err, app.ErrUserNotFound):
-			us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "no user found")
-			return nil, status.Error(codes.NotFound, "no user found")
-		case errors.Is(err, app.ErrEmailAlreadyConfirmed):
-			us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "email already confirmed")
-			return nil, status.Error(codes.AlreadyExists, "email already confirmed")
-		case errors.Is(err, app.ErrMsgAlreadySent):
-			us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "confirmation letter has already been sent")
-			return nil, status.Error(codes.FailedPrecondition, "confirmation letter has already been sent, check your email")
-		default:
-			us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "unexpected error", "error", err.Error())
-			return nil, status.Error(codes.Internal, "something went wrong")
-		}
+		return nil, us.handleError(ctx, err)
 	}
 	return &user.Empty{}, nil
 }
@@ -119,27 +82,17 @@ func (us *UserService) SendEmailConfirmation(ctx context.Context, req *user.User
 func (us *UserService) ConfirmEmail(ctx context.Context, req *user.ConfirmEmailRequest) (*user.Empty, error) {
 	userID := req.GetUserID()
 	if userID == "" {
-		us.logger.InfoContext(ctx, "user id can not be empty")
-		return nil, status.Error(codes.InvalidArgument, "user id can not be empty")
+		us.logger.InfoContext(ctx, "validation failed", slog.String("user id", "must be provided"))
+		return nil, badRequestResponse("validation", map[string]string{"user id": "must be provided"})
 	}
 	mailToken := req.GetMailToken()
 	if mailToken == "" {
-		us.logger.InfoContext(ctx, "mail token can not be empty")
-		return nil, status.Error(codes.InvalidArgument, "mail token can not be empty")
+		us.logger.InfoContext(ctx, "validation failed", slog.String("mail token", "must be provided"))
+		return nil, badRequestResponse("validation", map[string]string{"mail token": "must be provided"})
 	}
 	err := us.app.ConfirmEmail(ctx, userID, mailToken)
 	if err != nil {
-		switch {
-		case errors.Is(err, app.ErrUserNotFound):
-			us.logger.InfoContext(logger.ErrorCtx(ctx, err), "user not found")
-			return nil, status.Error(codes.NotFound, "user not found")
-		case errors.Is(err, app.ErrWrongMailToken):
-			us.logger.InfoContext(logger.ErrorCtx(ctx, err), "provided token has been expired or does not exist")
-			return nil, status.Error(codes.FailedPrecondition, "provided token has been expired or does not exist")
-		default:
-			us.logger.ErrorContext(logger.ErrorCtx(ctx, err), "unexpected error", "error", err.Error())
-			return nil, status.Error(codes.Internal, "something goes wrong")
-		}
+		return nil, us.handleError(ctx, err)
 	}
 	return &user.Empty{}, nil
 }
@@ -149,18 +102,17 @@ func (us *UserService) ConfirmEmail(ctx context.Context, req *user.ConfirmEmailR
 func (us *UserService) GetNewAccessToken(ctx context.Context, req *user.Token) (*user.Token, error) {
 	refresh := req.GetToken()
 	if refresh == "" {
-		us.logger.InfoContext(ctx, "refresh token can not be empty")
-		return nil, status.Error(codes.InvalidArgument, "refresh token can not be empty")
+		us.logger.InfoContext(ctx, "validation failed", slog.String("refresh token", "must be provided"))
+		return nil, badRequestResponse("validation", map[string]string{"refresh token": "must be provided"})
 	}
 	u, err := us.app.ParseJWTToken(refresh)
 	if err != nil {
 		us.logger.InfoContext(ctx, "token parsing", "error", err.Error())
-		return nil, status.Error(codes.InvalidArgument, "provided token badly structured")
+		return nil, badRequestResponse("parsing", map[string]string{"refresh token": "badly structured"})
 	}
 	access, err := us.app.CreateJWTToken(u.ID, u.Name, u.IsModer, u.IsAdmin, u.IsCore)
 	if err != nil {
-		us.logger.ErrorContext(ctx, "token creating", "error", err.Error())
-		return nil, status.Error(codes.Internal, "token creating failed")
+		return nil, us.handleError(ctx, err)
 	}
 	return &user.Token{Token: access}, nil
 }

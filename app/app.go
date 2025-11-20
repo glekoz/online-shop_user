@@ -193,7 +193,7 @@ func (a *App) Login(ctx context.Context, email, barePassword string) (access str
 	if err != nil {
 		ctx = logger.WithDetails(ctx, "email", email)
 		if errors.Is(err, repository.ErrNotFound) {
-			return "", "", logger.WrapError(ctx, ErrUserNotFound)
+			return "", "", logger.WrapError(ctx, ErrInvalidCredentials)
 		}
 		return "", "", logger.WrapError(ctx, err)
 	}
